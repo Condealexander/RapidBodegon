@@ -13,6 +13,7 @@ interface AppContextType {
   transactions: Transaction[];
   config: AppConfig;
   login: (name: string, pin: string) => boolean;
+  register: (name: string, pin: string) => Promise<boolean>;
   logout: () => void;
   addConsumption: (userId: string, productId: string, quantity: number) => Promise<void>;
   reportPayment: (userId: string, amountUSD: number, reference: string) => Promise<void>;
