@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "users": {
+      "title": "User",
+      "description": "User profiles and client balances",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "CLIENT"] },
+        "pin": { "type": "string" },
+        "balanceUSD": { "type": "number" }
+      },
+      "required": ["name", "role", "pin", "balanceUSD"]
+    },
+    "products": {
+      "title": "Product",
+      "description": "Inventory products and prices",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "priceUSD": { "type": "number" },
+        "stock": { "type": "number" }
+      },
+      "required": ["name", "priceUSD", "stock"]
+    },
+    "transactions": {
+      "title": "Transaction",
+      "description": "Consumption and payment records",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["CONSUMPTION", "PAYMENT"] },
+        "amountUSD": { "type": "number" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["COMPLETED", "PENDING", "REJECTED"] },
+        "productId": { "type": "string" },
+        "quantity": { "type": "number" },
+        "reference": { "type": "string" },
+        "bank": { "type": "string" }
+      },
+      "required": ["userId", "type", "amountUSD", "date", "status"]
+    },
+    "config": {
+      "title": "Config",
+      "description": "Global application configuration",
+      "type": "object",
+      "properties": {
+        "exchangeRate": { "type": "number" },
+        "cutoffDays": { "type": "number" },
+        "bankDetails": {
+          "type": "object",
+          "properties": {
+            "bank": { "type": "string" },
+            "owner": { "type": "string" },
+            "idCard": { "type": "string" },
+            "phone": { "type": "string" }
+          }
+        }
+      },
+      "required": ["exchangeRate", "cutoffDays", "bankDetails"]
+    }
+  }
+}

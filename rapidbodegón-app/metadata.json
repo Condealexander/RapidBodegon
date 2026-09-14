@@ -1,0 +1,6 @@
+{
+  "name": "RapidBodegón App",
+  "description": "Sistema de gestión de créditos, ventas y cobranza para bodegón interno.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
