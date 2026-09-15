@@ -97,7 +97,7 @@ export const Login = () => {
               </div>
 
               <div>
-                <Label htmlFor="pin">PIN Secreto (mínimo 4 dígitos)</Label>
+                <Label htmlFor="pin">PIN Secreto (mínimo 6 dígitos)</Label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <KeyRound size={18} className="text-slate-500" />
