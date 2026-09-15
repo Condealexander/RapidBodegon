@@ -1,11 +1,7 @@
 import { User, Product, AppConfig, Transaction } from '../types';
 
 export const mockUsers: User[] = [
-  { id: '1', name: 'ADMINISTRADOR', role: 'ADMIN', pin: '1234', balanceUSD: 0 },
-  { id: '2', name: 'JESUS LAMBIS', role: 'CLIENT', pin: '0000', balanceUSD: 4.40 },
-  { id: '3', name: 'ORIANA FARMARKET', role: 'CLIENT', pin: '0000', balanceUSD: 3.00 },
-  { id: '4', name: 'MILAGRITOS', role: 'CLIENT', pin: '0000', balanceUSD: 0 },
-  { id: '5', name: 'CARLOS AUDITOR', role: 'CLIENT', pin: '0000', balanceUSD: 7.80 },
+  { id: 'admin_root', name: 'ADMINISTRADOR', role: 'ADMIN', pin: '1234', balanceUSD: 0 }
 ];
 
 export const mockProducts: Product[] = [
@@ -30,15 +26,4 @@ export const mockConfig: AppConfig = {
   }
 };
 
-export const mockTransactions: Transaction[] = [
-  {
-    id: 't1',
-    userId: '2',
-    type: 'CONSUMPTION',
-    amountUSD: 4.40,
-    date: new Date(Date.now() - 86400000).toISOString(),
-    status: 'COMPLETED',
-    productId: 'p4',
-    quantity: 4
-  }
-];
+export const mockTransactions: Transaction[] = [];
