@@ -3,7 +3,7 @@ import { User, Product, Transaction, AppConfig } from '../types';
 import { mockUsers, mockProducts, mockConfig, mockTransactions } from '../data/mock';
 import { db } from '../firebase';
 import { 
-  collection, doc, onSnapshot, setDoc, updateDoc, increment 
+  collection, doc, onSnapshot, setDoc, updateDoc, increment, getDocs
 } from 'firebase/firestore';
 
 interface AppContextType {
@@ -32,21 +32,45 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
   const [config, setConfig] = useState<AppConfig>(mockConfig);
 
+  // Seed initial data (admin user, products and config) if the DB is empty.
+  useEffect(() => {
+    const seedInitialData = async () => {
+      try {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        if (usersSnap.empty) {
+          // Only create a single admin user so clients can register themselves
+          await setDoc(doc(db, 'users', 'admin_root'), {
+            id: 'admin_root',
+            name: 'ADMINISTRADOR',
+            role: 'ADMIN',
+            pin: '1234', // Change this PIN to something secure for production
+            balanceUSD: 0
+          });
+
+          // Preload inventory products
+          for (const p of mockProducts) {
+            await setDoc(doc(db, 'products', p.id), p);
+          }
+
+          // Initial configuration
+          await setDoc(doc(db, 'config', 'global'), mockConfig);
+        }
+      } catch (e) {
+        console.warn('Error while seeding initial data:', e);
+      }
+    };
+    seedInitialData();
+  }, []);
+
   // Realtime Firestore listener for Users
   useEffect(() => {
     const usersCol = collection(db, 'users');
     const unsub = onSnapshot(usersCol, (snapshot) => {
-      if (snapshot.empty) {
-        mockUsers.forEach(user => {
-          setDoc(doc(db, 'users', user.id), user);
-        });
-      } else {
-        const list: User[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ id: docSnap.id, ...docSnap.data() } as User);
-        });
-        setUsers(list);
-      }
+      const list: User[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() } as User);
+      });
+      setUsers(list);
     }, (error) => {
       console.warn('Firestore users listener warning:', error);
     });
@@ -54,41 +78,36 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, []);
   
   const register = async (name: string, pin: string): Promise<boolean> => {
-  const cleanName = name.trim().toUpperCase();
-  // Verificar si ya existe un usuario con ese nombre
-  const existing = users.find(u => u.name.toUpperCase() === cleanName);
-  if (existing) {
-    return false; // Usuario ya registrado
-  }
-    
-  const newId = Date.now().toString();
-  const newUser: User = {
-    id: newId,
-    name: cleanName,
-    role: 'CLIENT',
-    pin: pin.trim(),
-    balanceUSD: 0
+    const cleanName = name.trim().toUpperCase();
+    // Check if a user with that name already exists
+    const existing = users.find(u => u.name.toUpperCase() === cleanName);
+    if (existing) {
+      return false; // User already registered
+    }
+      
+    const newId = Date.now().toString();
+    const newUser: User = {
+      id: newId,
+      name: cleanName,
+      role: 'CLIENT',
+      pin: pin.trim(),
+      balanceUSD: 0
+    };
+
+    await setDoc(doc(db, 'users', newId), newUser);
+    setCurrentUser(newUser);
+    return true;
   };
 
-  await setDoc(doc(db, 'users', newId), newUser);
-  setCurrentUser(newUser);
-  return true;
-};l
   // Realtime Firestore listener for Products
   useEffect(() => {
     const productsCol = collection(db, 'products');
     const unsub = onSnapshot(productsCol, (snapshot) => {
-      if (snapshot.empty) {
-        mockProducts.forEach(prod => {
-          setDoc(doc(db, 'products', prod.id), prod);
-        });
-      } else {
-        const list: Product[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ id: docSnap.id, ...docSnap.data() } as Product);
-        });
-        setProducts(list);
-      }
+      const list: Product[] = [];
+      snapshot.forEach(docSnap => {
+        list.push({ id: docSnap.id, ...docSnap.data() } as Product);
+      });
+      setProducts(list);
     }, (error) => {
       console.warn('Firestore products listener warning:', error);
     });
