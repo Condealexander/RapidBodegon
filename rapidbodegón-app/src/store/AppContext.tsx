@@ -41,9 +41,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           // Only create a single admin user so clients can register themselves
           await setDoc(doc(db, 'users', 'admin_root'), {
             id: 'admin_root',
-            name: 'ADMINISTRADOR',
+            name: 'YO',
             role: 'ADMIN',
-            pin: '1234', // Change this PIN to something secure for production
+            pin: '741236', // Change this PIN to something secure for production
             balanceUSD: 0
           });
 
