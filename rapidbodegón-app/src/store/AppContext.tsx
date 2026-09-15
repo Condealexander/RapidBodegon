@@ -25,6 +25,7 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
+  
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>(mockUsers);
   const [products, setProducts] = useState<Product[]>(mockProducts);
@@ -51,7 +52,28 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     });
     return () => unsub();
   }, []);
+  
+  const register = async (name: string, pin: string): Promise<boolean> => {
+  const cleanName = name.trim().toUpperCase();
+  // Verificar si ya existe un usuario con ese nombre
+  const existing = users.find(u => u.name.toUpperCase() === cleanName);
+  if (existing) {
+    return false; // Usuario ya registrado
+  }
+    
+  const newId = Date.now().toString();
+  const newUser: User = {
+    id: newId,
+    name: cleanName,
+    role: 'CLIENT',
+    pin: pin.trim(),
+    balanceUSD: 0
+  };
 
+  await setDoc(doc(db, 'users', newId), newUser);
+  setCurrentUser(newUser);
+  return true;
+};l
   // Realtime Firestore listener for Products
   useEffect(() => {
     const productsCol = collection(db, 'products');
@@ -213,13 +235,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AppContext.Provider value={{
-      currentUser, users, products, transactions, config,
-      login, logout, addConsumption, reportPayment, approvePayment, rejectPayment, updateExchangeRate
-    }}>
-      {children}
-    </AppContext.Provider>
-  );
+  <AppContext.Provider value={{
+    currentUser, users, products, transactions, config,
+    login, register, logout, addConsumption, reportPayment, approvePayment, rejectPayment, updateExchangeRate
+  }}>
+    {children}
+  </AppContext.Provider>
+);
 };
 
 export const useApp = () => {
