@@ -1,7 +1,7 @@
 import { User, Product, AppConfig, Transaction } from '../types';
 
 export const mockUsers: User[] = [
-  { id: 'admin_root', name: 'ADMINISTRADOR', role: 'ADMIN', pin: '1234', balanceUSD: 0 }
+  { id: 'admin_root', name: 'ADMINISTRADOR', role: 'ADMIN', pin: '741236', balanceUSD: 0 }
 ];
 
 export const mockProducts: Product[] = [
