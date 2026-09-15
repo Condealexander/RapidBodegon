@@ -1,20 +1,34 @@
 import React, { useState } from 'react';
 import { useApp } from '../store/AppContext';
-import { Store, KeyRound, User as UserIcon } from 'lucide-react';
+import { Store, KeyRound, User as UserIcon, UserPlus, LogIn } from 'lucide-react';
 import { Card, CardContent, Input, Button, Label } from '../components/ui';
 
 export const Login = () => {
-  const { login } = useApp();
+  const { login, register } = useApp();
+  const [isRegistering, setIsRegistering] = useState(false);
   const [name, setName] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const success = login(name.trim(), pin);
-    if (!success) {
-      setError('Credenciales incorrectas. Verifique su nombre y PIN.');
+
+    if (pin.length < 6) {
+      setError('El PIN debe tener al menos 6 dígitos.');
+      return;
+    }
+
+    if (isRegistering) {
+      const success = await register(name, pin);
+      if (!success) {
+        setError('Ya existe un usuario registrado con ese nombre.');
+      }
+    } else {
+      const success = login(name.trim(), pin);
+      if (!success) {
+        setError('Credenciales incorrectas. Verifique su nombre y PIN.');
+      }
     }
   };
 
@@ -31,23 +45,49 @@ export const Login = () => {
 
         <Card>
           <CardContent>
+            {/* Selector entre Iniciar Sesión y Registro */}
+            <div className="flex border-b border-slate-700/50 mb-6 pb-2 gap-4 justify-center">
+              <button
+                type="button"
+                className={`flex items-center gap-2 pb-2 text-sm font-medium transition-colors border-b-2 ${
+                  !isRegistering
+                    ? 'border-blue-500 text-white'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+                onClick={() => { setIsRegistering(false); setError(''); }}
+              >
+                <LogIn size={16} /> Iniciar Sesión
+              </button>
+              <button
+                type="button"
+                className={`flex items-center gap-2 pb-2 text-sm font-medium transition-colors border-b-2 ${
+                  isRegistering
+                    ? 'border-blue-500 text-white'
+                    : 'border-transparent text-slate-400 hover:text-slate-200'
+                }`}
+                onClick={() => { setIsRegistering(true); setError(''); }}
+              >
+                <UserPlus size={16} /> Registrarme
+              </button>
+            </div>
+
             <form onSubmit={handleSubmit} className="space-y-5">
               {error && (
                 <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
                   {error}
                 </div>
               )}
-              
+
               <div>
-                <Label htmlFor="name">Nombre de Usuario</Label>
+                <Label htmlFor="name">Nombre y Apellido</Label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <UserIcon size={18} className="text-slate-500" />
                   </div>
-                  <Input 
+                  <Input
                     id="name"
-                    type="text" 
-                    placeholder="Ej. ADMINISTRADOR o MILAGRITOS" 
+                    type="text"
+                    placeholder="Ej. JUAN PEREZ"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     className="pl-10"
@@ -57,15 +97,16 @@ export const Login = () => {
               </div>
 
               <div>
-                <Label htmlFor="pin">PIN de Acceso</Label>
+                <Label htmlFor="pin">PIN Secreto (mínimo 4 dígitos)</Label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <KeyRound size={18} className="text-slate-500" />
                   </div>
-                  <Input 
+                  <Input
                     id="pin"
-                    type="password" 
-                    placeholder="****" 
+                    type="password"
+                    maxLength={6}
+                    placeholder="****"
                     value={pin}
                     onChange={(e) => setPin(e.target.value)}
                     className="pl-10"
@@ -75,23 +116,9 @@ export const Login = () => {
               </div>
 
               <Button type="submit" className="w-full py-2.5 text-base mt-2">
-                Ingresar al Sistema
+                {isRegistering ? 'Crear mi cuenta' : 'Ingresar al Sistema'}
               </Button>
             </form>
-
-            <div className="mt-6 pt-6 border-t border-slate-700/50">
-              <p className="text-xs text-slate-500 text-center mb-3">Datos Demo:</p>
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                  <p className="text-slate-300 font-medium">Admin</p>
-                  <p className="text-slate-500">ADMINISTRADOR / 1234</p>
-                </div>
-                <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                  <p className="text-slate-300 font-medium">Cliente</p>
-                  <p className="text-slate-500">JESUS LAMBIS / 0000</p>
-                </div>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>
