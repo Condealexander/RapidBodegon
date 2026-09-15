@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, Product, Transaction, AppConfig } from '../types';
-import { mockUsers, mockProducts, mockConfig, mockTransactions } from '../data/mock';
+import { mockProducts, mockConfig, mockTransactions } from '../data/mock';
 import { db } from '../firebase';
 import { 
   collection, doc, onSnapshot, setDoc, updateDoc, increment 
