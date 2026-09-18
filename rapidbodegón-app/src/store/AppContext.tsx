@@ -3,7 +3,8 @@ import { User, Product, Transaction, AppConfig } from '../types';
 import { mockProducts, mockConfig, mockTransactions } from '../data/mock';
 import { db, auth } from '../firebase';
 import {
-  collection, doc, onSnapshot, setDoc, updateDoc, increment, getDocs, getDoc, query, where
+  collection, doc, onSnapshot, setDoc, updateDoc, increment, getDocs, getDoc,
+  query, where, runTransaction, writeBatch
 } from 'firebase/firestore';
 import {
   onAuthStateChanged,
@@ -18,6 +19,22 @@ interface RegisterResult {
   error?: string;
 }
 
+interface ConsumptionResult {
+  success: boolean;
+  error?: string;
+}
+
+export interface ProductImportRow {
+  name: string;
+  stock: number;
+  priceUSD?: number;
+}
+
+interface ProductImportResult {
+  updated: number;
+  created: number;
+}
+
 interface AppContextType {
   currentUser: User | null;
   users: User[];
@@ -27,11 +44,13 @@ interface AppContextType {
   login: (name: string, pin: string) => Promise<boolean>;
   register: (name: string, pin: string) => Promise<RegisterResult>;
   logout: () => Promise<void>;
-  addConsumption: (userId: string, productId: string, quantity: number) => Promise<void>;
+  addConsumption: (userId: string, productId: string, quantity: number) => Promise<ConsumptionResult>;
   reportPayment: (userId: string, amountUSD: number, reference: string) => Promise<void>;
   approvePayment: (transactionId: string) => Promise<void>;
   rejectPayment: (transactionId: string) => Promise<void>;
   updateExchangeRate: (rate: number) => Promise<void>;
+  updateProductStock: (productId: string, newStock: number) => Promise<void>;
+  importProducts: (rows: ProductImportRow[]) => Promise<ProductImportResult>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -46,6 +65,9 @@ const normalizeName = (name: string) =>
 
 const emailForName = (name: string) =>
   `${normalizeName(name).replace(/[^A-Z0-9]/g, '')}@${AUTH_DOMAIN_SUFFIX}`;
+
+const slugify = (name: string) =>
+  normalizeName(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
 
@@ -74,7 +96,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         const email = emailForName(bootstrapName);
         const cred = await createUserWithEmailAndPassword(auth, email, bootstrapPin);
 
-        const adminUser: User = { 	
+        const adminUser: User = {
           id: cred.user.uid,
           name: normalizeName(bootstrapName),
           role: 'ADMIN',
@@ -229,28 +251,46 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     await signOut(auth);
   };
 
-// restruturacion de codigo agente claude
-
-  const addConsumption = async (userId: string, productId: string, quantity: number) => {
-    const product = products.find(p => p.id === productId);
-    if (!product) return;
-
-    const amountUSD = product.priceUSD * quantity;
+  // Consumption is atomic: check stock, decrement it, credit the balance and
+  // log the transaction all inside one Firestore transaction — so two loads
+  // happening at the same time can never leave stock negative.
+  const addConsumption = async (userId: string, productId: string, quantity: number): Promise<ConsumptionResult> => {
+    const productRef = doc(db, 'products', productId);
+    const userRef = doc(db, 'users', userId);
     const txRef = doc(collection(db, 'transactions'));
 
-    const newTx: Transaction = {
-      id: txRef.id,
-      userId,
-      type: 'CONSUMPTION',
-      amountUSD,
-      date: new Date().toISOString(),
-      status: 'COMPLETED',
-      productId,
-      quantity
-    };
+    try {
+      await runTransaction(db, async (transaction) => {
+        const productSnap = await transaction.get(productRef);
+        if (!productSnap.exists()) {
+          throw new Error('El producto ya no existe.');
+        }
+        const product = productSnap.data() as Product;
 
-    await setDoc(txRef, newTx);
-    await updateDoc(doc(db, 'users', userId), { balanceUSD: increment(amountUSD) });
+        if (product.stock < quantity) {
+          throw new Error(`Stock insuficiente de "${product.name}" (disponible: ${product.stock}).`);
+        }
+
+        const amountUSD = product.priceUSD * quantity;
+        const newTx: Transaction = {
+          id: txRef.id,
+          userId,
+          type: 'CONSUMPTION',
+          amountUSD,
+          date: new Date().toISOString(),
+          status: 'COMPLETED',
+          productId,
+          quantity
+        };
+
+        transaction.set(txRef, newTx);
+        transaction.update(userRef, { balanceUSD: increment(amountUSD) });
+        transaction.update(productRef, { stock: increment(-quantity) });
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'No se pudo registrar el consumo.' };
+    }
   };
 
   const reportPayment = async (userId: string, amountUSD: number, reference: string) => {
@@ -282,6 +322,47 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     await updateDoc(doc(db, 'config', 'global'), { exchangeRate: rate });
   };
 
+  // Manual inventory adjustment (admin sets the stock to an exact value).
+  const updateProductStock = async (productId: string, newStock: number) => {
+    await updateDoc(doc(db, 'products', productId), { stock: newStock });
+  };
+
+  // Bulk import/update from an uploaded Excel/CSV file (parsed by the UI
+  // layer into simple rows). Matches existing products by name; creates a
+  // new product doc for any name that doesn't match yet.
+  const importProducts = async (rows: ProductImportRow[]): Promise<ProductImportResult> => {
+    const batch = writeBatch(db);
+    let updated = 0;
+    let created = 0;
+
+    rows.forEach(row => {
+      const cleanName = row.name.trim().toUpperCase();
+      const existing = products.find(p => p.name.toUpperCase() === cleanName);
+
+      if (existing) {
+        const patch: Partial<Product> = { stock: row.stock };
+        if (row.priceUSD !== undefined && !isNaN(row.priceUSD)) {
+          patch.priceUSD = row.priceUSD;
+        }
+        batch.update(doc(db, 'products', existing.id), patch);
+        updated++;
+      } else {
+        const newId = slugify(cleanName) || `prod-${Date.now()}-${created}`;
+        const newProduct: Product = {
+          id: newId,
+          name: cleanName,
+          priceUSD: row.priceUSD !== undefined && !isNaN(row.priceUSD) ? row.priceUSD : 0,
+          stock: row.stock
+        };
+        batch.set(doc(db, 'products', newId), newProduct);
+        created++;
+      }
+    });
+
+    await batch.commit();
+    return { updated, created };
+  };
+
   return (
     <AppContext.Provider value={{
       currentUser,
@@ -296,7 +377,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       reportPayment,
       approvePayment,
       rejectPayment,
-      updateExchangeRate
+      updateExchangeRate,
+      updateProductStock,
+      importProducts
     }}>
       {!authLoading && children}
     </AppContext.Provider>
@@ -310,4 +393,3 @@ export const useApp = () => {
   }
   return context;
 };
-
