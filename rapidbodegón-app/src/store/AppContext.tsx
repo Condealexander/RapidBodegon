@@ -187,5 +187,3 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       productId,
       quantity
     };
-
-  ... (truncated)
