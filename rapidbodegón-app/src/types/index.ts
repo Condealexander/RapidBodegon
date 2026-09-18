@@ -1,11 +1,13 @@
 export type Role = 'ADMIN' | 'CLIENT';
 
 export interface User {
-  id: string;
+  id: string; // Firebase Auth UID (matches the auth.uid of the account)
   name: string;
   role: Role;
-  pin: string; // Simplified auth for demo
   balanceUSD: number;
+  // NOTE: PIN/password is no longer stored in Firestore. Authentication now
+  // lives in Firebase Auth (email/password with a synthetic email derived
+  // from the client's name). See src/store/AppContext.tsx (emailForName).
 }
 
 export interface Product {
@@ -25,11 +27,11 @@ export interface Transaction {
   amountUSD: number;
   date: string;
   status: TransactionStatus;
-  
+
   // Specific to CONSUMPTION
   productId?: string;
   quantity?: number;
-  
+
   // Specific to PAYMENT
   reference?: string;
   bank?: string;
@@ -45,3 +47,4 @@ export interface AppConfig {
     phone: string;
   };
 }
+
