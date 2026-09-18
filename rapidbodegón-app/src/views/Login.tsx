@@ -9,26 +9,32 @@ export const Login = () => {
   const [name, setName] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (pin.length < 6) {
-      setError('El PIN debe tener al menos 6 dígitos.');
+      setError('El PIN debe tener al menos 6 dígitos !(-.-).');
       return;
     }
 
-    if (isRegistering) {
-      const success = await register(name, pin);
-      if (!success) {
-        setError('Ya existe un usuario registrado con ese nombre.');
+    setSubmitting(true);
+    try {
+      if (isRegistering) {
+        const result = await register(name, pin);
+        if (!result.success) {
+          setError(result.error || 'No se pudo completar el registro (o_o¡).');
+        }
+      } else {
+        const success = await login(name.trim(), pin);
+        if (!success) {
+          setError('Credenciales incorrectas. Verifique su nombre y PIN (0_0).');
+        }
       }
-    } else {
-      const success = login(name.trim(), pin);
-      if (!success) {
-        setError('Credenciales incorrectas. Verifique su nombre y PIN.');
-      }
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -115,8 +121,8 @@ export const Login = () => {
                 </div>
               </div>
 
-              <Button type="submit" className="w-full py-2.5 text-base mt-2">
-                {isRegistering ? 'Crear mi cuenta' : 'Ingresar al Sistema'}
+              <Button type="submit" className="w-full py-2.5 text-base mt-2" disabled={submitting}>
+                {submitting ? 'Procesando...' : (isRegistering ? 'Crear mi cuenta' : 'Ingresar al Sistema')}
               </Button>
             </form>
           </CardContent>
@@ -125,3 +131,4 @@ export const Login = () => {
     </div>
   );
 };
+
