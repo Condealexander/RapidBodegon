@@ -1,7 +1,8 @@
 import { User, Product, AppConfig, Transaction } from '../types';
 
+// NOTE: mockUsers is no longer used anywhere (AppContext.tsx now bootstraps
 export const mockUsers: User[] = [
-  { id: 'admin_root', name: 'ADMINISTRADOR', role: 'ADMIN', pin: '741236', balanceUSD: 0 }
+  { id: 'admin_root', name: 'ADMINISTRADOR', role: 'ADMIN', balanceUSD: 0 }
 ];
 
 export const mockProducts: Product[] = [
