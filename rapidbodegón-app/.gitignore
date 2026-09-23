@@ -1,0 +1,17 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Secrets — nunca subir esto
+.env
+.env.local
+.env.*.local
+service-account*.json
+*serviceAccountKey*.json
+
+.DS_Store
+*.log
+npm-debug.log*
+
+.vercel
