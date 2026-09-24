@@ -73,6 +73,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
   const [products, setProducts] = useState<Product[]>(mockProducts);
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
@@ -100,6 +101,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         setCurrentUser(null);
       } finally {
         setAuthLoading(false);
+        setAuthReady(true);
       }
     });
     return () => unsub();
@@ -135,6 +137,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Realtime Firestore listener for Users
   useEffect(() => {
+    if (!authReady || !currentUser) return;
     const usersCol = collection(db, 'users');
     const unsub = onSnapshot(usersCol, (snapshot) => {
       const list: User[] = [];
@@ -146,10 +149,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Firestore users listener warning:', error);
     });
     return () => unsub();
-  }, []);
+  }, [authReady, currentUser]);
 
   // Realtime Firestore listener for Products
   useEffect(() => {
+    if (!authReady || !currentUser) return;
     const productsCol = collection(db, 'products');
     const unsub = onSnapshot(productsCol, (snapshot) => {
       const list: Product[] = [];
@@ -161,10 +165,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Firestore products listener warning:', error);
     });
     return () => unsub();
-  }, []);
+  }, [authReady, currentUser]);
 
   // Realtime Firestore listener for Transactions
   useEffect(() => {
+    if (!authReady || !currentUser) return;
     const txCol = collection(db, 'transactions');
     const unsub = onSnapshot(txCol, (snapshot) => {
       const list: Transaction[] = [];
@@ -177,10 +182,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Firestore transactions listener warning:', error);
     });
     return () => unsub();
-  }, []);
+  }, [authReady, currentUser]);
 
   // Realtime Firestore listener for Config
   useEffect(() => {
+    if (!authReady || !currentUser) return;
     const configDoc = doc(db, 'config', 'global');
     const unsub = onSnapshot(configDoc, (docSnap) => {
       if (docSnap.exists()) {
@@ -190,7 +196,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Firestore config listener warning:', error);
     });
     return () => unsub();
-  }, []);
+  }, [authReady, currentUser]);
 
   // Sync currentUser with realtime users list (e.g. balance changes)
   useEffect(() => {
@@ -280,9 +286,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     await updateDoc(doc(db, 'transactions', transactionId), { status: 'REJECTED' });
   };
 
-  const updateExchangeRate = async (rate: number) => {
-    await updateDoc(doc(db, 'config', 'global'), { exchangeRate: rate });
-  };
+const updateExchangeRate = async (rate: number) => {
+  await setDoc(doc(db, 'config', 'global'), { exchangeRate: rate }, { merge: true });
+};
 
   // Manual inventory adjustment (admin sets the stock to an exact value).
   const updateProductStock = async (productId: string, newStock: number) => {
