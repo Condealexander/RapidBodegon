@@ -4,7 +4,7 @@ import { mockProducts, mockConfig, mockTransactions } from '../data/mock';
 import { db, auth } from '../firebase';
 import {
   collection, doc, onSnapshot, setDoc, updateDoc, increment, getDoc,
-  runTransaction, writeBatch
+  runTransaction, writeBatch, query, where, orderBy, limit
 } from 'firebase/firestore';
 import {
   onAuthStateChanged,
@@ -135,21 +135,39 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Realtime Firestore listener for Users
+  // Realtime Firestore listener for Users.
+  // ADMIN watches the whole directory (needed for the client list/reports).
+  // CLIENT watches only their own document — this is the single biggest
+  // cost saver: instead of every client paying for a read of ALL users on
+  // every balance change, they only pay for reads of their own doc.
   useEffect(() => {
     if (!authReady || !currentUser) return;
-    const usersCol = collection(db, 'users');
-    const unsub = onSnapshot(usersCol, (snapshot) => {
-      const list: User[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as User);
+
+    if (currentUser.role === 'ADMIN') {
+      const usersCol = collection(db, 'users');
+      const unsub = onSnapshot(usersCol, (snapshot) => {
+        const list: User[] = [];
+        snapshot.forEach(docSnap => {
+          list.push({ id: docSnap.id, ...docSnap.data() } as User);
+        });
+        setUsers(list);
+      }, (error) => {
+        console.warn('Firestore users listener warning:', error);
       });
-      setUsers(list);
+      return () => unsub();
+    }
+
+    const unsub = onSnapshot(doc(db, 'users', currentUser.id), (docSnap) => {
+      if (docSnap.exists()) {
+        const updated = { id: docSnap.id, ...docSnap.data() } as User;
+        setCurrentUser(updated);
+        setUsers([updated]);
+      }
     }, (error) => {
-      console.warn('Firestore users listener warning:', error);
+      console.warn('Firestore own-user listener warning:', error);
     });
     return () => unsub();
-  }, [authReady, currentUser]);
+  }, [authReady, currentUser?.id, currentUser?.role]);
 
   // Realtime Firestore listener for Products
   useEffect(() => {
@@ -167,11 +185,21 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => unsub();
   }, [authReady, currentUser]);
 
-  // Realtime Firestore listener for Transactions
+  // Realtime Firestore listener for Transactions.
+  // ADMIN watches everything, capped to the most recent 1000 (so the
+  // listener's cost doesn't keep growing forever as history piles up).
+  // CLIENT watches only their own transactions — same reasoning as users
+  // above: this is the collection that changes the most often, so scoping
+  // it per-client is what saves the most reads.
   useEffect(() => {
     if (!authReady || !currentUser) return;
+
     const txCol = collection(db, 'transactions');
-    const unsub = onSnapshot(txCol, (snapshot) => {
+    const txQuery = currentUser.role === 'ADMIN'
+      ? query(txCol, orderBy('date', 'desc'), limit(1000))
+      : query(txCol, where('userId', '==', currentUser.id));
+
+    const unsub = onSnapshot(txQuery, (snapshot) => {
       const list: Transaction[] = [];
       snapshot.forEach(docSnap => {
         list.push({ id: docSnap.id, ...docSnap.data() } as Transaction);
@@ -182,7 +210,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Firestore transactions listener warning:', error);
     });
     return () => unsub();
-  }, [authReady, currentUser]);
+  }, [authReady, currentUser?.id, currentUser?.role]);
 
   // Realtime Firestore listener for Config
   useEffect(() => {
@@ -198,9 +226,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => unsub();
   }, [authReady, currentUser]);
 
-  // Sync currentUser with realtime users list (e.g. balance changes)
+  // Keep currentUser in sync with the full users list — only relevant for
+  // ADMIN now, since CLIENT gets this straight from their own-doc listener
+  // above (and 'users' for a CLIENT is just [currentUser] anyway).
   useEffect(() => {
-    if (currentUser) {
+    if (currentUser?.role === 'ADMIN') {
       const updated = users.find(u => u.id === currentUser.id);
       if (updated) setCurrentUser(updated);
     }
