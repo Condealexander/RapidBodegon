@@ -8,27 +8,48 @@
  * DESDE TU CODESPACE O MÁQUINA. Nunca lo despliegues ni lo llames desde el
  * cliente.
  *
- * Uso:
+ * Uso (con Application Default Credentials, recomendado tras
+ * `gcloud auth application-default login`):
+ *   node scripts/create-admin.mjs "ADMINISTRADOR" "unPinNuevoBienSecreto" --project=tu-project-id
+ *
+ * Uso (con archivo de service account):
  *   node scripts/create-admin.mjs "ADMINISTRADOR" "unPinNuevoBienSecreto" ./service-account.json
  *
- * Si omites la ruta del service account, usa la variable de entorno
- * GOOGLE_APPLICATION_CREDENTIALS.
+ * Si omites ambos, usa la variable de entorno GOOGLE_APPLICATION_CREDENTIALS
+ * (debe apuntar a un archivo JSON de service account).
  *
- * Cómo conseguir el service account:
+ * Cómo conseguir el service account (alternativa a ADC):
  *   Firebase Console → engranaje (Configuración del proyecto) →
  *   Cuentas de servicio → "Generar nueva clave privada". Descarga el JSON,
  *   guárdalo en la raíz de rapidbodegón-app como service-account.json —
  *   YA ESTÁ en .gitignore, pero confirma que nunca aparezca en `git status`.
  */
-import { initializeApp, cert } from 'firebase-admin/app';
+import { initializeApp, cert, applicationDefault } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { readFileSync } from 'fs';
 
-const [, , rawName, pin, serviceAccountPathArg] = process.argv;
+const rawArgs = process.argv.slice(2);
+
+let projectId = null;
+const positional = [];
+for (const arg of rawArgs) {
+  if (arg.startsWith('--project=')) {
+    projectId = arg.slice('--project='.length);
+  } else if (arg === '--project') {
+    // soporta también "--project valor" separado por espacio
+    projectId = '__NEXT__';
+  } else if (projectId === '__NEXT__') {
+    projectId = arg;
+  } else {
+    positional.push(arg);
+  }
+}
+
+const [rawName, pin, serviceAccountPathArg] = positional;
 
 if (!rawName || !pin) {
-  console.error('Uso: node scripts/create-admin.mjs "<NOMBRE>" "<PIN>" [ruta-service-account.json]');
+  console.error('Uso: node scripts/create-admin.mjs "<NOMBRE>" "<PIN>" [ruta-service-account.json | --project=<project-id>]');
   process.exit(1);
 }
 
@@ -37,15 +58,25 @@ if (pin.length < 6) {
   process.exit(1);
 }
 
-const credPath = serviceAccountPathArg || process.env.GOOGLE_APPLICATION_CREDENTIALS;
-if (!credPath) {
-  console.error('Falta la ruta al service account JSON (3er argumento, o variable GOOGLE_APPLICATION_CREDENTIALS).');
+let appOptions;
+
+if (serviceAccountPathArg) {
+  // Modo service account JSON explícito
+  const serviceAccount = JSON.parse(readFileSync(serviceAccountPathArg, 'utf8'));
+  appOptions = { credential: cert(serviceAccount) };
+} else if (process.env.GOOGLE_APPLICATION_CREDENTIALS && !projectId) {
+  // Modo variable de entorno apuntando a un service account JSON
+  const serviceAccount = JSON.parse(readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8'));
+  appOptions = { credential: cert(serviceAccount) };
+} else if (projectId) {
+  // Modo Application Default Credentials (gcloud auth application-default login)
+  appOptions = { credential: applicationDefault(), projectId };
+} else {
+  console.error('Falta la ruta al service account JSON, o --project=<project-id> junto con ADC (gcloud auth application-default login), o la variable GOOGLE_APPLICATION_CREDENTIALS.');
   process.exit(1);
 }
 
-const serviceAccount = JSON.parse(readFileSync(credPath, 'utf8'));
-
-initializeApp({ credential: cert(serviceAccount) });
+initializeApp(appOptions);
 
 const auth = getAuth();
 const db = getFirestore();
