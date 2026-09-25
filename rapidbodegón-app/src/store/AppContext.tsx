@@ -41,16 +41,16 @@ interface AppContextType {
   products: Product[];
   transactions: Transaction[];
   config: AppConfig;
-  login: (name: string, pin: string) => Promise<boolean>;
+  login: (name: string, pin: string) => Promise<RegisterResult>;
   register: (name: string, pin: string) => Promise<RegisterResult>;
   logout: () => Promise<void>;
   addConsumption: (userId: string, productId: string, quantity: number) => Promise<ConsumptionResult>;
-  reportPayment: (userId: string, amountUSD: number, reference: string) => Promise<void>;
-  approvePayment: (transactionId: string) => Promise<void>;
-  rejectPayment: (transactionId: string) => Promise<void>;
-  updateExchangeRate: (rate: number) => Promise<void>;
-  updateProductStock: (productId: string, newStock: number) => Promise<void>;
-  importProducts: (rows: ProductImportRow[]) => Promise<ProductImportResult>;
+  reportPayment: (userId: string, amountUSD: number, reference: string) => Promise<RegisterResult>;
+  approvePayment: (transactionId: string) => Promise<RegisterResult>;
+  rejectPayment: (transactionId: string) => Promise<RegisterResult>;
+  updateExchangeRate: (rate: number) => Promise<RegisterResult>;
+  updateProductStock: (productId: string, newStock: number) => Promise<RegisterResult>;
+  importProducts: (rows: ProductImportRow[]) => Promise<ProductImportResult | { updated: 0; created: 0; error: string }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -109,6 +109,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const register = async (name: string, pin: string): Promise<RegisterResult> => {
     const cleanName = normalizeName(name);
+
+        if (pin.length < 8) {                                          
+      return { success: false, error: 'El PIN debe tener al menos 8 dígitos.' };  
+    } 
+
     const existing = users.find(u => u.name.toUpperCase() === cleanName);
     if (existing) {
       return { success: false, error: 'Ya existe un usuario registrado con ese nombre.' };
@@ -129,7 +134,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         return { success: false, error: 'Ya existe un usuario registrado con ese nombre.' };
       }
       if (e?.code === 'auth/weak-password') {
-        return { success: false, error: 'El PIN debe tener al menos 6 dígitos.' };
+        return { success: false, error: 'El PIN debe tener al menos 8 dígitos.' };
       }
       return { success: false, error: 'No se pudo completar el registro. Intente de nuevo.' };
     }
@@ -236,12 +241,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [users]);
 
-  const login = async (name: string, pin: string): Promise<boolean> => {
+  const login = async (name: string, pin: string): Promise<RegisterResult> => {
     try {
       await signInWithEmailAndPassword(auth, emailForName(name), pin);
-      return true;
-    } catch (e) {
-      return false;
+      return { success: true };
+    } catch (e: any) {
+      // Mensaje genérico a propósito: no decimos si el usuario no existe o
+      // si el PIN está mal, para no facilitar enumeración de cuentas.
+      if (e?.code === 'auth/too-many-requests') {
+        return { success: false, error: 'Demasiados intentos fallidos. Intenta de nuevo en unos minutos.' };
+      }
+      return { success: false, error: 'Nombre o PIN incorrecto.' };
     }
   };
 
@@ -291,103 +301,142 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const reportPayment = async (userId: string, amountUSD: number, reference: string) => {
-    const txRef = doc(collection(db, 'transactions'));
-    const newTx: Transaction = {
-      id: txRef.id,
-      userId,
-      type: 'PAYMENT',
-      amountUSD,
-      date: new Date().toISOString(),
-      status: 'PENDING',
-      reference
-    };
-    await setDoc(txRef, newTx);
+  const reportPayment = async (userId: string, amountUSD: number, reference: string): Promise<RegisterResult> => {
+    try {
+      const txRef = doc(collection(db, 'transactions'));
+      const newTx: Transaction = {
+        id: txRef.id,
+        userId,
+        type: 'PAYMENT',
+        amountUSD,
+        date: new Date().toISOString(),
+        status: 'PENDING',
+        reference
+      };
+      await setDoc(txRef, newTx);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: 'No se pudo reportar el pago. Intenta de nuevo.' };
+    }
   };
 
-  const approvePayment = async (transactionId: string) => {
-    const tx = transactions.find(t => t.id === transactionId);
-    if (!tx) return;
-    await updateDoc(doc(db, 'transactions', transactionId), { status: 'COMPLETED' });
-    await updateDoc(doc(db, 'users', tx.userId), { balanceUSD: increment(-tx.amountUSD) });
+  const approvePayment = async (transactionId: string): Promise<RegisterResult> => {
+    try {
+      const tx = transactions.find(t => t.id === transactionId);
+      if (!tx) return { success: false, error: 'La transacción ya no existe.' };
+      await updateDoc(doc(db, 'transactions', transactionId), { status: 'COMPLETED' });
+      await updateDoc(doc(db, 'users', tx.userId), { balanceUSD: increment(-tx.amountUSD) });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: 'No se pudo aprobar el pago. Intenta de nuevo.' };
+    }
+  };
+ 
+
+  const rejectPayment = async (transactionId: string): Promise<RegisterResult> => {
+    try {
+      await updateDoc(doc(db, 'transactions', transactionId), { status: 'REJECTED' });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: 'No se pudo rechazar el pago. Intenta de nuevo.' };
+    }
   };
 
-  const rejectPayment = async (transactionId: string) => {
-    await updateDoc(doc(db, 'transactions', transactionId), { status: 'REJECTED' });
+  const updateExchangeRate = async (rate: number): Promise<RegisterResult> => {
+    try {
+      // setDoc con merge en vez de updateDoc: no falla si config/global
+      // todavía no existiera por alguna razón.
+      await setDoc(doc(db, 'config', 'global'), { exchangeRate: rate }, { merge: true });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: 'No se pudo actualizar la tasa de cambio.' };
+    }
   };
-
-const updateExchangeRate = async (rate: number) => {
-  await setDoc(doc(db, 'config', 'global'), { exchangeRate: rate }, { merge: true });
-};
 
   // Manual inventory adjustment (admin sets the stock to an exact value).
-  const updateProductStock = async (productId: string, newStock: number) => {
-    await updateDoc(doc(db, 'products', productId), { stock: newStock });
+  const updateProductStock = async (productId: string, newStock: number): Promise<RegisterResult> => {
+    try {
+      await updateDoc(doc(db, 'products', productId), { stock: newStock });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: 'No se pudo actualizar el stock. ¿El producto existe en Firestore?' };
+    }
   };
 
   // Bulk import/update from an uploaded Excel/CSV file (parsed by the UI
   // layer into simple rows). Matches existing products by name; creates a
   // new product doc for any name that doesn't match yet.
-  const importProducts = async (rows: ProductImportRow[]): Promise<ProductImportResult> => {
-    const batch = writeBatch(db);
-    let updated = 0;
-    let created = 0;
-
-    rows.forEach(row => {
-      const cleanName = row.name.trim().toUpperCase();
-      const existing = products.find(p => p.name.toUpperCase() === cleanName);
-
-      if (existing) {
-        const patch: Partial<Product> = { stock: row.stock };
-        if (row.priceUSD !== undefined && !isNaN(row.priceUSD)) {
-          patch.priceUSD = row.priceUSD;
+  const importProducts = async (rows: ProductImportRow[]): Promise<ProductImportResult | { updated: 0; created: 0; error: string }> => {
+    try {
+      const batch = writeBatch(db);
+      let updated = 0;
+      let created = 0;
+ 
+      rows.forEach(row => {
+        const cleanName = row.name.trim().toUpperCase();
+        const existing = products.find(p => p.name.toUpperCase() === cleanName);
+ 
+        if (existing) {
+          const patch: Partial<Product> = { stock: row.stock };
+          if (row.priceUSD !== undefined && !isNaN(row.priceUSD)) {
+            patch.priceUSD = row.priceUSD;
+          }
+          batch.update(doc(db, 'products', existing.id), patch);
+          updated++;
+        } else {
+          const newId = slugify(cleanName) || `prod-${Date.now()}-${created}`;
+          const newProduct: Product = {
+            id: newId,
+            name: cleanName,
+            priceUSD: row.priceUSD !== undefined && !isNaN(row.priceUSD) ? row.priceUSD : 0,
+            stock: row.stock
+          };
+          batch.set(doc(db, 'products', newId), newProduct);
+          created++;
         }
-        batch.update(doc(db, 'products', existing.id), patch);
-        updated++;
-      } else {
-        const newId = slugify(cleanName) || `prod-${Date.now()}-${created}`;
-        const newProduct: Product = {
-          id: newId,
-          name: cleanName,
-          priceUSD: row.priceUSD !== undefined && !isNaN(row.priceUSD) ? row.priceUSD : 0,
-          stock: row.stock
-        };
-        batch.set(doc(db, 'products', newId), newProduct);
-        created++;
-      }
-    });
+      });
+ 
+      await batch.commit();
+      return { updated, created };
+    } catch (e: any) {
+      return { updated: 0, created: 0, error: 'No se pudo importar el archivo. Verifica el formato.' };
+    }
+    
+  };
 
-    await batch.commit();
-    return { updated, created };
+  const value: AppContextType = {
+    currentUser,
+    users,
+    products,
+    transactions,
+    config,
+    login,
+    register,
+    logout,
+    addConsumption,
+    reportPayment,
+    approvePayment,
+    rejectPayment,
+    updateExchangeRate,
+    updateProductStock,
+    importProducts
   };
 
   return (
-    <AppContext.Provider value={{
-      currentUser,
-      users,
-      products,
-      transactions,
-      config,
-      login,
-      register,
-      logout,
-      addConsumption,
-      reportPayment,
-      approvePayment,
-      rejectPayment,
-      updateExchangeRate,
-      updateProductStock,
-      importProducts
-    }}>
-      {!authLoading && children}
+    <AppContext.Provider value={value}>
+      {children}
     </AppContext.Provider>
   );
 };
 
-export const useApp = () => {
+export const useAppContext = () => {
   const context = useContext(AppContext);
-  if (context === undefined) {
-    throw new Error('useApp must be used within an AppProvider');
+  if (!context) {
+    throw new Error('useAppContext must be used within an AppProvider');
   }
   return context;
 };
+
+export const useApp = useAppContext;
+
+export default AppContext;
