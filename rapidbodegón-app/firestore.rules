@@ -18,7 +18,8 @@ service cloud.firestore {
 
     // --- users ---
     match /users/{userId} {
-      allow read: if isSignedIn();
+    
+  allow read: if isOwner(userId) || isAdmin();
 
       // Self-registration: a signed-in user may create only their own
       // profile, and only as CLIENT with a zero starting balance. ADMIN
@@ -52,20 +53,37 @@ service cloud.firestore {
     match /transactions/{txId} {
       allow read: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
 
+      // Admin can log any transaction. A client may only create their own
+      // PENDING report — either a payment or a consumption they're asking
+      // the admin to confirm — but never mark it COMPLETED themselves.
+      allow create: if isAdmin()
+        || (isSignedIn()
+            && request.resource.data.userId == request.auth.uid
+            && request.resource.data.status == 'PENDING'
+            && (request.resource.data.type == 'PAYMENT' || request.resource.data.type == 'CONSUMPTION'));
+
+      // Only admins change status (approve/reject) or edit a transaction.
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
       // Admin can log any transaction (e.g. CONSUMPTION for a client).
       // A client may only create their own PENDING payment report — they
       // can never mark their own payment as COMPLETED.
       allow create: if isAdmin()
         || (isSignedIn()
             && request.resource.data.userId == request.auth.uid
-            && request.resource.data.type == 'PAYMENT'
-            && request.resource.data.status == 'PENDING');
-
+            && request.resource.data.status == 'PENDING'
+            && (
+              request.resource.data.type == 'PAYMENT'
+              || (request.resource.data.type == 'CONSUMPTION'
+                  && request.resource.data.productId is string
+                  && request.resource.data.quantity is int
+                  && request.resource.data.quantity > 0
+                  && request.resource.data.quantity <= 50)
+            ));
       // Only admins change status (approve/reject) or edit a transaction.
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
-
     // --- config ---
     match /config/{configId} {
       allow read: if isSignedIn();
@@ -75,6 +93,6 @@ service cloud.firestore {
     // Deny everything else by default (no more `allow read, write: if true`).
     match /{document=**} {
       allow read, write: if false;
+       }
     }
   }
-}
