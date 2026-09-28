@@ -8,29 +8,33 @@ import { AppProvider, useApp } from './store/AppContext';
 import { Login } from './views/Login';
 import { ClientView } from './views/ClientView';
 
-// AdminView carga recharts y xlsx, que son pesados y solo los necesita un
-// admin. Con lazy(), ese código ni siquiera se descarga para un cliente
-// normal — solo se pide cuando currentUser.role === 'ADMIN' realmente
-// renderiza este componente.
+// AdminView arrastra recharts y xlsx (pesados); solo se descarga si entra un admin.
 const AdminView = lazy(() =>
   import('./views/AdminView').then(module => ({ default: module.AdminView }))
 );
 
-const AdminViewFallback = () => (
+const LoadingScreen = ({ text }: { text: string }) => (
   <div style={{
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: '100vh',
+    background: '#020617',
     color: '#94a3b8',
     fontSize: 14
   }}>
-    Cargando panel de administración...
+    {text}
   </div>
 );
 
 const MainApp = () => {
-  const { currentUser } = useApp();
+  const { currentUser, authLoading } = useApp();
+
+  // Mientras Firebase restaura la sesión guardada, no mostramos el Login
+  // (evita el destello de "Ingresar al Sistema" al recargar estando logueado).
+  if (authLoading) {
+    return <LoadingScreen text="Cargando..." />;
+  }
 
   if (!currentUser) {
     return <Login />;
@@ -38,7 +42,7 @@ const MainApp = () => {
 
   if (currentUser.role === 'ADMIN') {
     return (
-      <Suspense fallback={<AdminViewFallback />}>
+      <Suspense fallback={<LoadingScreen text="Cargando panel de administración..." />}>
         <AdminView />
       </Suspense>
     );

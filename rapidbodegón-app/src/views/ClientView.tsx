@@ -1,46 +1,152 @@
 import React, { useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
-import { 
-  Copy, LogOut, Wallet, Info, Receipt, CheckCircle2, Clock 
+import {
+  Copy, Check, LogOut, Wallet, Info, Receipt, CheckCircle2, Clock, AlertCircle
 } from 'lucide-react';
 import { Card, CardHeader, CardContent, Button, Input, Label } from '../components/ui';
 
+// Ponlo en true SOLO cuando el AdminView ya tenga los botones para
+// aprobar/rechazar consumos pendientes y las reglas de Firestore permitan
+// crear CONSUMPTION en estado PENDING. Si no, las solicitudes se acumulan
+// sin que nadie las vea.
+const ENABLE_CONSUMPTION_REPORT = true;
+
+const STATUS_UI: Record<string, { label: string; className: string }> = {
+  PENDING: { label: 'En validación', className: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' },
+  COMPLETED: { label: 'Aprobado', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
+  REJECTED: { label: 'Rechazado', className: 'bg-red-500/10 text-red-400 border-red-500/20' },
+};
+
+const StatusBadge = ({ status }: { status: string }) => {
+  const ui = STATUS_UI[status] || STATUS_UI.PENDING;
+  return (
+    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border ${ui.className}`}>
+      {ui.label}
+    </span>
+  );
+};
+
+const selectClass =
+  'w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500';
+
 export const ClientView = () => {
-  const { 
-    currentUser, transactions, config, products, 
-    logout, reportPayment 
+  const {
+    currentUser, transactions, config, products,
+    logout, reportPayment, requestConsumption
   } = useApp();
-  
+
+  // Pago
+  const [currency, setCurrency] = useState<'USD' | 'BS'>('USD');
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentRef, setPaymentRef] = useState('');
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
+  const [submittingPayment, setSubmittingPayment] = useState(false);
+
+  // Copiar
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Reporte de consumo
+  const [consProductId, setConsProductId] = useState('');
+  const [consQty, setConsQty] = useState('1');
+  const [consMessage, setConsMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+  const [submittingCons, setSubmittingCons] = useState(false);
 
   if (!currentUser) return null;
 
   const userTransactions = transactions.filter(t => t.userId === currentUser.id);
   const myConsumptions = userTransactions.filter(t => t.type === 'CONSUMPTION');
-  
-  // Calculate if there are pending payments that haven't been approved yet
-  const pendingPaymentsAmount = userTransactions
-    .filter(t => t.type === 'PAYMENT' && t.status === 'PENDING')
+  const myPayments = userTransactions.filter(t => t.type === 'PAYMENT');
+
+  const pendingPaymentsAmount = myPayments
+    .filter(t => t.status === 'PENDING')
     .reduce((acc, t) => acc + t.amountUSD, 0);
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    // In a real app we'd show a toast here
+  const rate = config.exchangeRate;
+  const canUseBs = !!rate && rate > 0;
+
+  // Monto en USD que se va a reportar (convierte si el cliente pagó en Bs).
+  const parsedAmount = parseFloat(paymentAmount.replace(',', '.'));
+  const amountUSD =
+    !isNaN(parsedAmount) && parsedAmount > 0
+      ? Math.round((currency === 'BS' && canUseBs ? parsedAmount / rate : parsedAmount) * 100) / 100
+      : 0;
+
+  const handleCopy = async (key: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 1500);
+    } catch {
+      setPaymentError('No se pudo copiar. Cópialo manualmente.');
+    }
   };
 
-  const handleReportPayment = (e: React.FormEvent) => {
+  const handleReportPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    const amount = parseFloat(paymentAmount);
-    if (!isNaN(amount) && amount > 0 && paymentRef) {
-      reportPayment(currentUser.id, amount, paymentRef);
-      setPaymentAmount('');
-      setPaymentRef('');
-      setPaymentSuccess(true);
-      setTimeout(() => setPaymentSuccess(false), 3000);
+    if (submittingPayment) return;
+    setPaymentError('');
+
+    if (amountUSD < 0.1) {
+      setPaymentError('Ingresa un monto válido.');
+      return;
     }
+    const ref = paymentRef.trim();
+    if (!/^\d{4,12}$/.test(ref)) {
+      setPaymentError('La referencia debe tener entre 4 y 12 dígitos, solo números.');
+      return;
+    }
+    if (myPayments.some(t => t.reference === ref && t.status !== 'REJECTED')) {
+      setPaymentError('Ya reportaste un pago con esa referencia.');
+      return;
+    }
+
+    setSubmittingPayment(true);
+    const result = await reportPayment(currentUser.id, amountUSD, ref);
+    setSubmittingPayment(false);
+
+    if (!result.success) {
+      setPaymentError(result.error || 'No se pudo reportar el pago. Intenta de nuevo.');
+      return;
+    }
+
+    setPaymentAmount('');
+    setPaymentRef('');
+    setPaymentSuccess(true);
+    setTimeout(() => setPaymentSuccess(false), 3000);
+  };
+
+  const availableProducts = products.filter(p => p.stock > 0);
+
+  const handleRequestConsumption = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submittingCons) return;
+    setConsMessage(null);
+
+    const qty = parseInt(consQty, 10);
+    const product = products.find(p => p.id === consProductId);
+    if (!product || isNaN(qty) || qty < 1) {
+      setConsMessage({ type: 'error', text: 'Elige un producto y una cantidad válida.' });
+      return;
+    }
+    if (qty > product.stock) {
+      setConsMessage({ type: 'error', text: `Solo hay ${product.stock} disponibles de ${product.name}.` });
+      return;
+    }
+
+    setSubmittingCons(true);
+    const result = await requestConsumption(consProductId, qty);
+    setSubmittingCons(false);
+
+    if (!result.success) {
+      setConsMessage({ type: 'error', text: result.error || 'No se pudo enviar el reporte.' });
+      return;
+    }
+    setConsProductId('');
+    setConsQty('1');
+    setConsMessage({ type: 'ok', text: 'Listo. El administrador confirmará lo que tomaste.' });
+    setTimeout(() => setConsMessage(null), 4000);
   };
 
   return (
@@ -56,10 +162,9 @@ export const ClientView = () => {
         </Button>
       </div>
 
-      {/* Main Content */}
       <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-        
-        {/* Balance Card */}
+
+        {/* Columna izquierda */}
         <div className="space-y-6">
           <Card className={`border ${currentUser.balanceUSD > 0 ? 'border-red-500/30' : 'border-emerald-500/30'}`}>
             <CardContent className="p-8 text-center">
@@ -67,7 +172,7 @@ export const ClientView = () => {
                 <Wallet size={32} className={currentUser.balanceUSD > 0 ? 'text-red-400' : 'text-emerald-400'} />
               </div>
               <p className="text-slate-400 font-medium mb-2">Saldo Total Pendiente</p>
-              
+
               <h2 className="text-5xl font-bold text-white mb-2">
                 {formatCurrency(currentUser.balanceUSD)}
               </h2>
@@ -96,39 +201,48 @@ export const ClientView = () => {
             </CardContent>
           </Card>
 
-          {/* Payment Info */}
           <Card>
             <CardHeader title="Datos para Pago Móvil / Transferencia" />
             <CardContent>
               <div className="space-y-3">
                 {[
-                  { label: 'Banco', value: config.bankDetails.bank },
-                  { label: 'Titular', value: config.bankDetails.owner },
-                  { label: 'Cédula / RIF', value: config.bankDetails.idCard },
-                  { label: 'Teléfono', value: config.bankDetails.phone },
-                ].map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800">
+                  { key: 'bank', label: 'Banco', value: config.bankDetails.bank },
+                  { key: 'owner', label: 'Titular', value: config.bankDetails.owner },
+                  { key: 'idCard', label: 'Cédula / RIF', value: config.bankDetails.idCard },
+                  { key: 'phone', label: 'Teléfono', value: config.bankDetails.phone },
+                ].map(item => (
+                  <div key={item.key} className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800">
                     <div>
                       <p className="text-xs text-slate-500">{item.label}</p>
                       <p className="font-medium text-slate-200">{item.value}</p>
                     </div>
-                    <Button variant="secondary" className="p-2 h-auto" onClick={() => handleCopy(item.value)}>
-                      <Copy size={16} />
+                    <Button
+                      variant="secondary"
+                      className="p-2 h-auto"
+                      onClick={() => handleCopy(item.key, item.value)}
+                      aria-label={`Copiar ${item.label}`}
+                    >
+                      {copiedKey === item.key
+                        ? <Check size={16} className="text-emerald-400" />
+                        : <Copy size={16} />}
                     </Button>
                   </div>
                 ))}
               </div>
               <div className="mt-4 flex items-start gap-2 p-3 bg-blue-500/10 rounded-lg text-blue-400 text-sm">
                 <Info size={16} className="shrink-0 mt-0.5" />
-                <p>Tasa del día: <strong>{formatBs(1, config.exchangeRate)}</strong>. Puede realizar el pago en Bs o $. Una vez realizado, repórtelo en el formulario.</p>
+                <p>
+                  Tasa del día: <strong>{formatBs(1, config.exchangeRate)}</strong>.
+                  Puede realizar el pago en Bs o $. Una vez realizado, repórtelo en el formulario.
+                </p>
               </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Right Column */}
+        {/* Columna derecha */}
         <div className="space-y-6">
-          {/* Report Payment Form */}
+          {/* Reportar pago */}
           <Card>
             <CardHeader title="Reportar Pago" />
             <CardContent>
@@ -142,42 +256,150 @@ export const ClientView = () => {
                 </div>
               ) : (
                 <form onSubmit={handleReportPayment} className="space-y-4">
+                  {paymentError && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                      <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                      <span>{paymentError}</span>
+                    </div>
+                  )}
+
                   <div>
-                    <Label>Monto Pagado (Expresado en USD)</Label>
-                    <Input 
-                      type="number" 
-                      step="0.01" 
-                      min="0.1"
-                      placeholder="Ej. 5.50"
-                      value={paymentAmount} 
+                    <Label>Monto pagado</Label>
+                    <div className="flex gap-2 mb-2">
+                      <Button
+                        type="button"
+                        variant={currency === 'USD' ? undefined : 'secondary'}
+                        className="flex-1 py-1.5 text-sm"
+                        onClick={() => setCurrency('USD')}
+                      >
+                        Dólares ($)
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={currency === 'BS' ? undefined : 'secondary'}
+                        className="flex-1 py-1.5 text-sm"
+                        disabled={!canUseBs}
+                        onClick={() => setCurrency('BS')}
+                      >
+                        Bolívares (Bs)
+                      </Button>
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      inputMode="decimal"
+                      placeholder={currency === 'USD' ? 'Ej. 5.50' : 'Ej. 250,00'}
+                      value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
                       required
                     />
-                    <p className="text-xs text-slate-500 mt-1">
-                      Si pagó en Bs, divida el monto entre {formatBs(1, config.exchangeRate)}
-                    </p>
+                    {currency === 'BS' && amountUSD > 0 && (
+                      <p className="text-xs text-slate-400 mt-1">
+                        Equivale a <strong>{formatCurrency(amountUSD)}</strong> a la tasa del día.
+                      </p>
+                    )}
                   </div>
-                  
+
                   <div>
                     <Label>Referencia Bancaria</Label>
-                    <Input 
-                      type="text" 
+                    <Input
+                      type="text"
+                      inputMode="numeric"
                       placeholder="Últimos 4-6 dígitos"
-                      value={paymentRef} 
-                      onChange={(e) => setPaymentRef(e.target.value)}
+                      value={paymentRef}
+                      onChange={(e) => setPaymentRef(e.target.value.replace(/\D/g, ''))}
+                      maxLength={12}
                       required
                     />
                   </div>
 
-                  <Button type="submit" className="w-full">
-                    Enviar Reporte
+                  <Button type="submit" className="w-full" disabled={submittingPayment}>
+                    {submittingPayment ? 'Enviando...' : 'Enviar Reporte'}
                   </Button>
                 </form>
               )}
             </CardContent>
           </Card>
 
-          {/* History */}
+          {/* Reportar consumo (apagado por defecto, ver flag arriba) */}
+          {ENABLE_CONSUMPTION_REPORT && (
+            <Card>
+              <CardHeader title="Reportar lo que tomé" />
+              <CardContent>
+                <form onSubmit={handleRequestConsumption} className="space-y-4">
+                  {consMessage && (
+                    <div
+                      className={`p-3 rounded-lg text-sm border ${
+                        consMessage.type === 'ok'
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                          : 'bg-red-500/10 border-red-500/20 text-red-400'
+                      }`}
+                    >
+                      {consMessage.text}
+                    </div>
+                  )}
+                  <div>
+                    <Label>Producto</Label>
+                    <select
+                      className={selectClass}
+                      value={consProductId}
+                      onChange={(e) => setConsProductId(e.target.value)}
+                      required
+                    >
+                      <option value="">Seleccione producto…</option>
+                      {availableProducts.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} — {formatCurrency(p.priceUSD)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>Cantidad</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputMode="numeric"
+                      value={consQty}
+                      onChange={(e) => setConsQty(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={submittingCons}>
+                    {submittingCons ? 'Enviando...' : 'Enviar reporte'}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Mis pagos */}
+          <Card>
+            <CardHeader title="Mis Pagos Reportados" />
+            <CardContent className="p-0">
+              <div className="divide-y divide-slate-800 max-h-[240px] overflow-y-auto">
+                {myPayments.length === 0 ? (
+                  <div className="p-6 text-center text-slate-500">Aún no has reportado pagos.</div>
+                ) : (
+                  myPayments.slice(0, 15).map(tx => (
+                    <div key={tx.id} className="p-4 flex justify-between items-center">
+                      <div>
+                        <p className="font-medium text-white">{formatCurrency(tx.amountUSD)}</p>
+                        <p className="text-xs text-slate-500">
+                          {new Date(tx.date).toLocaleDateString()} • Ref: {tx.reference}
+                        </p>
+                      </div>
+                      <StatusBadge status={tx.status} />
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Historial de consumo */}
           <Card>
             <CardHeader title="Historial de Consumo" />
             <CardContent className="p-0">
@@ -188,7 +410,12 @@ export const ClientView = () => {
                   myConsumptions.map(tx => {
                     const product = products.find(p => p.id === tx.productId);
                     return (
-                      <div key={tx.id} className="p-4 flex justify-between items-center hover:bg-slate-800/30">
+                      <div
+                        key={tx.id}
+                        className={`p-4 flex justify-between items-center hover:bg-slate-800/30 ${
+                          tx.status === 'REJECTED' ? 'opacity-50' : ''
+                        }`}
+                      >
                         <div className="flex items-center gap-3">
                           <div className="p-2 bg-slate-800 rounded text-slate-400">
                             <Receipt size={16} />
@@ -200,8 +427,9 @@ export const ClientView = () => {
                             </p>
                           </div>
                         </div>
-                        <div className="text-right">
+                        <div className="text-right space-y-1">
                           <p className="font-medium text-white">{formatCurrency(tx.amountUSD)}</p>
+                          {tx.status !== 'COMPLETED' && <StatusBadge status={tx.status} />}
                         </div>
                       </div>
                     );
@@ -211,7 +439,6 @@ export const ClientView = () => {
             </CardContent>
           </Card>
         </div>
-
       </div>
     </div>
   );

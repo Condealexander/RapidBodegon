@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
 import {
   Users, DollarSign, Wallet, Calendar, Plus,
   CheckCircle2, XCircle, Search, Clock, LogOut, BarChart3,
-  Package, Upload, Save
+  Package, Upload, Save, Receipt, AlertCircle
 } from 'lucide-react';
 import { Card, CardHeader, CardContent, Button, Input, Label } from '../components/ui';
 import {
@@ -13,10 +13,18 @@ import {
 import * as XLSX from 'xlsx';
 import type { ProductImportRow } from '../store/AppContext';
 
+type ActionResult = { success: boolean; error?: string };
+
+const dayKey = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 export const AdminView = () => {
   const {
     users, products, transactions, config, logout,
     addConsumption, updateExchangeRate, approvePayment, rejectPayment,
+    approveConsumption, rejectConsumption,
     updateProductStock, importProducts
   } = useApp();
 
@@ -24,13 +32,24 @@ export const AdminView = () => {
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
-  const [newRate, setNewRate] = useState<string>(config.exchangeRate.toString());
+  const [newRate, setNewRate] = useState<string>(String(config.exchangeRate ?? ''));
+  const [rateMsg, setRateMsg] = useState<string>('');
   const [consumptionError, setConsumptionError] = useState<string>('');
+
+  // Errores de acciones (aprobar/rechazar/guardar stock) y bloqueo anti doble clic
+  const [actionError, setActionError] = useState<string>('');
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   // Inventory management state
   const [stockEdits, setStockEdits] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string>('');
+
+  // Mantiene el campo de tasa sincronizado con el valor real de Firestore
+  // (al montar, config todavía puede ser el valor por defecto).
+  useEffect(() => {
+    setNewRate(String(config.exchangeRate ?? ''));
+  }, [config.exchangeRate]);
 
   const clients = users.filter(u => u.role === 'CLIENT');
   const filteredClients = clients.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -43,20 +62,27 @@ export const AdminView = () => {
     .reduce((acc, t) => acc + t.amountUSD, 0);
 
   const pendingPayments = transactions.filter(t => t.type === 'PAYMENT' && t.status === 'PENDING');
+  const pendingConsumptions = transactions.filter(t => t.type === 'CONSUMPTION' && t.status === 'PENDING');
 
+  // Solo consumos confirmados cuentan para las ventas.
   const consumptions = transactions.filter(t => t.type === 'CONSUMPTION' && t.status === 'COMPLETED');
 
-  // Daily sales data
+  // Ventas diarias: se agrupa por fecha local (YYYY-MM-DD) para poder ordenar bien.
   const dailySalesMap = consumptions.reduce((acc, curr) => {
-    const date = new Date(curr.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    acc[date] = (acc[date] || 0) + curr.amountUSD;
+    const key = dayKey(curr.date);
+    acc[key] = (acc[key] || 0) + curr.amountUSD;
     return acc;
   }, {} as Record<string, number>);
 
-  const dailySalesData = Object.keys(dailySalesMap).map(date => ({
-    date,
-    total: dailySalesMap[date]
-  })).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()); // sort chronologically
+  const dailySalesData = Object.keys(dailySalesMap)
+    .sort()
+    .map(key => {
+      const [y, m, d] = key.split('-').map(Number);
+      return {
+        date: new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+        total: dailySalesMap[key]
+      };
+    });
 
   // Client sales data
   const clientSalesMap = consumptions.reduce((acc, curr) => {
@@ -70,7 +96,22 @@ export const AdminView = () => {
       name: client ? client.name.split(' ')[0] : 'Desconocido',
       total: clientSalesMap[userId]
     };
-  }).sort((a, b) => b.total - a.total).slice(0, 5); // top 5 clients
+  }).sort((a, b) => b.total - a.total).slice(0, 5);
+
+  // Ejecuta una acción con bloqueo de doble clic y muestra el error si falla.
+  const runAction = async (id: string, fn: () => Promise<ActionResult>) => {
+    if (busyId) return;
+    setBusyId(id);
+    setActionError('');
+    try {
+      const result = await fn();
+      if (!result.success) {
+        setActionError(result.error || 'No se pudo completar la acción.');
+      }
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const handleAddConsumption = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,12 +128,17 @@ export const AdminView = () => {
     }
   };
 
-  const handleUpdateRate = (e: React.FormEvent) => {
+  const handleUpdateRate = async (e: React.FormEvent) => {
     e.preventDefault();
+    setRateMsg('');
     const rate = parseFloat(newRate);
-    if (!isNaN(rate) && rate > 0) {
-      updateExchangeRate(rate);
+    if (isNaN(rate) || rate <= 0) {
+      setRateMsg('Ingresa una tasa válida.');
+      return;
     }
+    const result = await updateExchangeRate(rate);
+    setRateMsg(result.success ? 'Tasa actualizada.' : (result.error || 'No se pudo actualizar la tasa.'));
+    if (result.success) setTimeout(() => setRateMsg(''), 3000);
   };
 
   const handleStockInputChange = (productId: string, value: string) => {
@@ -103,7 +149,12 @@ export const AdminView = () => {
     const raw = stockEdits[productId];
     const newStock = parseInt(raw, 10);
     if (isNaN(newStock) || newStock < 0) return;
-    await updateProductStock(productId, newStock);
+    setActionError('');
+    const result = await updateProductStock(productId, newStock);
+    if (!result.success) {
+      setActionError(result.error || 'No se pudo actualizar el stock.');
+      return;
+    }
     setStockEdits(prev => {
       const next = { ...prev };
       delete next[productId];
@@ -150,7 +201,11 @@ export const AdminView = () => {
       }
 
       const result = await importProducts(parsed);
-      setImportMsg(`Importación completa: ${result.updated} producto(s) actualizado(s), ${result.created} creado(s).`);
+      if ('error' in result) {
+        setImportMsg(result.error);
+      } else {
+        setImportMsg(`Importación completa: ${result.updated} producto(s) actualizado(s), ${result.created} creado(s).`);
+      }
     } catch (err) {
       console.error(err);
       setImportMsg('Error al leer el archivo. Verifique que sea un .xlsx, .xls o .csv válido.');
@@ -178,6 +233,18 @@ export const AdminView = () => {
           </Button>
         </div>
       </div>
+
+      {actionError && (
+        <div className="max-w-7xl mx-auto mb-6 flex items-start justify-between gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+          <span className="flex items-start gap-2">
+            <AlertCircle size={16} className="shrink-0 mt-0.5" />
+            {actionError}
+          </span>
+          <button type="button" className="text-red-300 hover:text-white" onClick={() => setActionError('')}>
+            <XCircle size={16} />
+          </button>
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         {/* KPI Cards */}
@@ -284,8 +351,71 @@ export const AdminView = () => {
       </div>
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Client List & Conciliation */}
+        {/* Left Column */}
         <div className="lg:col-span-2 space-y-6">
+
+          {/* Consumos por confirmar (reportados por clientes) */}
+          {pendingConsumptions.length > 0 && (
+            <Card className="border-blue-500/30">
+              <CardHeader
+                title="Consumos por Confirmar"
+                subtitle={`${pendingConsumptions.length} reporte(s) de clientes en espera`}
+              />
+              <CardContent className="p-0">
+                <div className="divide-y divide-slate-700/50">
+                  {pendingConsumptions.map(tx => {
+                    const client = users.find(u => u.id === tx.userId);
+                    const product = products.find(p => p.id === tx.productId);
+                    const qty = Number(tx.quantity) || 0;
+                    // Se muestra el monto con el precio REAL del producto, no el
+                    // que escribió el cliente (al confirmar se usa este mismo cálculo).
+                    const realAmount = product ? Math.round(product.priceUSD * qty * 100) / 100 : null;
+                    return (
+                      <div key={tx.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-blue-500/5">
+                        <div>
+                          <p className="font-medium text-white">{client?.name || 'Cliente'}</p>
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm mt-1">
+                            <span className="text-slate-300 flex items-center">
+                              <Receipt size={12} className="mr-1" />
+                              {product?.name || 'Producto no encontrado'} × {qty}
+                            </span>
+                            <span className="text-blue-400 font-medium">
+                              {realAmount !== null ? formatCurrency(realAmount) : '—'}
+                            </span>
+                            {product && product.stock < qty && (
+                              <span className="text-red-400 text-xs">stock insuficiente ({product.stock})</span>
+                            )}
+                            <span className="text-slate-500 text-xs flex items-center">
+                              <Clock size={12} className="mr-1" />
+                              {new Date(tx.date).toLocaleDateString()}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="success"
+                            className="px-3 py-1.5"
+                            disabled={busyId !== null}
+                            onClick={() => runAction(tx.id, () => approveConsumption(tx.id))}
+                          >
+                            <CheckCircle2 size={18} className="mr-1" /> Confirmar
+                          </Button>
+                          <Button
+                            variant="danger"
+                            className="px-3 py-1.5"
+                            disabled={busyId !== null}
+                            onClick={() => runAction(tx.id, () => rejectConsumption(tx.id))}
+                          >
+                            <XCircle size={18} className="mr-1" /> Rechazar
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Pending Payments */}
           {pendingPayments.length > 0 && (
@@ -312,10 +442,20 @@ export const AdminView = () => {
                           </div>
                         </div>
                         <div className="flex gap-2">
-                          <Button variant="success" className="px-3 py-1.5" onClick={() => approvePayment(tx.id)}>
+                          <Button
+                            variant="success"
+                            className="px-3 py-1.5"
+                            disabled={busyId !== null}
+                            onClick={() => runAction(tx.id, () => approvePayment(tx.id))}
+                          >
                             <CheckCircle2 size={18} className="mr-1" /> Validar
                           </Button>
-                          <Button variant="danger" className="px-3 py-1.5" onClick={() => rejectPayment(tx.id)}>
+                          <Button
+                            variant="danger"
+                            className="px-3 py-1.5"
+                            disabled={busyId !== null}
+                            onClick={() => runAction(tx.id, () => rejectPayment(tx.id))}
+                          >
                             <XCircle size={18} className="mr-1" /> Rechazar
                           </Button>
                         </div>
@@ -563,6 +703,7 @@ export const AdminView = () => {
                     />
                     <Button type="submit" variant="secondary">Actualizar</Button>
                   </div>
+                  {rateMsg && <p className="text-xs text-slate-400 mt-2">{rateMsg}</p>}
                 </div>
               </form>
 

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { User, Product, Transaction, AppConfig } from '../types';
 import { mockProducts, mockConfig, mockTransactions } from '../data/mock';
 import { db, auth } from '../firebase';
@@ -11,7 +11,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signOut,
-  User as FirebaseAuthUser
+  User as FirebaseAuthUser,
+  UserCredential
 } from 'firebase/auth';
 
 interface RegisterResult {
@@ -37,6 +38,7 @@ interface ProductImportResult {
 
 interface AppContextType {
   currentUser: User | null;
+  authLoading: boolean;
   users: User[];
   products: Product[];
   transactions: Transaction[];
@@ -45,6 +47,9 @@ interface AppContextType {
   register: (name: string, pin: string) => Promise<RegisterResult>;
   logout: () => Promise<void>;
   addConsumption: (userId: string, productId: string, quantity: number) => Promise<ConsumptionResult>;
+  requestConsumption: (productId: string, quantity: number) => Promise<RegisterResult>;
+  approveConsumption: (transactionId: string) => Promise<RegisterResult>;
+  rejectConsumption: (transactionId: string) => Promise<RegisterResult>;
   reportPayment: (userId: string, amountUSD: number, reference: string) => Promise<RegisterResult>;
   approvePayment: (transactionId: string) => Promise<RegisterResult>;
   rejectPayment: (transactionId: string) => Promise<RegisterResult>;
@@ -79,11 +84,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
   const [config, setConfig] = useState<AppConfig>(mockConfig);
 
-  // NOTE: the ADMIN account is no longer bootstrapped from client code.
-  // It's created (and its PIN rotated) with scripts/create-admin.mjs,
-  // which uses the Firebase Admin SDK server-side — so the admin PIN never
-  // ships inside the JS bundle served to the browser. That script also
-  // seeds the initial product catalog and config on first run.
+  // true mientras register() está creando la cuenta + el perfil. Evita que
+  // onAuthStateChanged deje currentUser en null porque el perfil de
+  // Firestore todavía no existe en ese instante.
+  const registeringRef = useRef(false);
+
+  // NOTE: the ADMIN account is never created from client code. It's created
+  // (and its PIN rotated) with scripts/create-admin.mjs, which uses the
+  // Firebase Admin SDK server-side.
 
   // Track the Firebase Auth session and hydrate the matching Firestore profile.
   useEffect(() => {
@@ -91,14 +99,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       if (!fbUser) {
         setCurrentUser(null);
         setAuthLoading(false);
+        setAuthReady(true);
         return;
       }
       try {
         const profileSnap = await getDoc(doc(db, 'users', fbUser.uid));
-        setCurrentUser(profileSnap.exists() ? ({ id: profileSnap.id, ...profileSnap.data() } as User) : null);
+        if (profileSnap.exists()) {
+          setCurrentUser({ id: profileSnap.id, ...profileSnap.data() } as User);
+        } else if (!registeringRef.current) {
+          setCurrentUser(null);
+        }
+        // Si se está registrando, register() asigna currentUser al terminar.
       } catch (e) {
         console.warn('Error loading user profile:', e);
-        setCurrentUser(null);
+        if (!registeringRef.current) setCurrentUser(null);
       } finally {
         setAuthLoading(false);
         setAuthReady(true);
@@ -110,17 +124,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const register = async (name: string, pin: string): Promise<RegisterResult> => {
     const cleanName = normalizeName(name);
 
-        if (pin.length < 8) {                                          
-      return { success: false, error: 'El PIN debe tener al menos 8 dígitos.' };  
-    } 
-
-    const existing = users.find(u => u.name.toUpperCase() === cleanName);
-    if (existing) {
-      return { success: false, error: 'Ya existe un usuario registrado con ese nombre.' };
+    if (pin.length < 8) {
+      return { success: false, error: 'El PIN debe tener al menos 8 dígitos.' };
     }
 
+    registeringRef.current = true;
+    let cred: UserCredential | null = null;
     try {
-      const cred = await createUserWithEmailAndPassword(auth, emailForName(name), pin);
+      cred = await createUserWithEmailAndPassword(auth, emailForName(name), pin);
       const newUser: User = {
         id: cred.user.uid,
         name: cleanName,
@@ -128,8 +139,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         balanceUSD: 0
       };
       await setDoc(doc(db, 'users', cred.user.uid), newUser);
+      setCurrentUser(newUser); // entra directo a su cuenta, sin recargar
       return { success: true };
     } catch (e: any) {
+      // Si se creó la cuenta de Auth pero falló el perfil, la borramos para
+      // no dejar un usuario "huérfano" que ya no podría volver a registrarse.
+      if (cred) {
+        try { await cred.user.delete(); } catch { /* nada más que hacer */ }
+      }
       if (e?.code === 'auth/email-already-in-use') {
         return { success: false, error: 'Ya existe un usuario registrado con ese nombre.' };
       }
@@ -137,14 +154,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         return { success: false, error: 'El PIN debe tener al menos 8 dígitos.' };
       }
       return { success: false, error: 'No se pudo completar el registro. Intente de nuevo.' };
+    } finally {
+      registeringRef.current = false;
     }
   };
 
   // Realtime Firestore listener for Users.
   // ADMIN watches the whole directory (needed for the client list/reports).
-  // CLIENT watches only their own document — this is the single biggest
-  // cost saver: instead of every client paying for a read of ALL users on
-  // every balance change, they only pay for reads of their own doc.
+  // CLIENT watches only their own document.
   useEffect(() => {
     if (!authReady || !currentUser) return;
 
@@ -174,7 +191,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => unsub();
   }, [authReady, currentUser?.id, currentUser?.role]);
 
-  // Realtime Firestore listener for Products
+  // Realtime Firestore listener for Products.
+  // Depende solo del id: si dependiera de todo currentUser, se volvería a
+  // suscribir (y a leer todos los productos) cada vez que cambia el saldo.
   useEffect(() => {
     if (!authReady || !currentUser) return;
     const productsCol = collection(db, 'products');
@@ -188,14 +207,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Firestore products listener warning:', error);
     });
     return () => unsub();
-  }, [authReady, currentUser]);
+  }, [authReady, currentUser?.id]);
 
   // Realtime Firestore listener for Transactions.
-  // ADMIN watches everything, capped to the most recent 1000 (so the
-  // listener's cost doesn't keep growing forever as history piles up).
-  // CLIENT watches only their own transactions — same reasoning as users
-  // above: this is the collection that changes the most often, so scoping
-  // it per-client is what saves the most reads.
+  // ADMIN watches the most recent 1000; CLIENT only their own.
   useEffect(() => {
     if (!authReady || !currentUser) return;
 
@@ -229,11 +244,10 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       console.warn('Firestore config listener warning:', error);
     });
     return () => unsub();
-  }, [authReady, currentUser]);
+  }, [authReady, currentUser?.id]);
 
   // Keep currentUser in sync with the full users list — only relevant for
-  // ADMIN now, since CLIENT gets this straight from their own-doc listener
-  // above (and 'users' for a CLIENT is just [currentUser] anyway).
+  // ADMIN (a CLIENT gets this from their own-doc listener above).
   useEffect(() => {
     if (currentUser?.role === 'ADMIN') {
       const updated = users.find(u => u.id === currentUser.id);
@@ -257,11 +271,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = async () => {
     await signOut(auth);
+    // Limpia datos en memoria para que no queden a la vista del siguiente
+    // usuario que inicie sesión en este mismo dispositivo.
+    setUsers([]);
+    setTransactions([]);
   };
 
-  // Consumption is atomic: check stock, decrement it, credit the balance and
-  // log the transaction all inside one Firestore transaction — so two loads
-  // happening at the same time can never leave stock negative.
+  // Consumption logged by the ADMIN: atomic — check stock, decrement it,
+  // credit the balance and log the transaction in one Firestore transaction.
   const addConsumption = async (userId: string, productId: string, quantity: number): Promise<ConsumptionResult> => {
     const productRef = doc(db, 'products', productId);
     const userRef = doc(db, 'users', userId);
@@ -301,6 +318,94 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // El cliente reporta lo que tomó. NO descuenta stock ni cambia el saldo:
+  // queda PENDING hasta que el admin lo confirme.
+  const requestConsumption = async (productId: string, quantity: number): Promise<RegisterResult> => {
+    if (!currentUser) return { success: false, error: 'Debes iniciar sesión.' };
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return { success: false, error: 'La cantidad debe ser un número entero mayor a cero.' };
+    }
+
+    const product = products.find(p => p.id === productId);
+    if (!product) return { success: false, error: 'Ese producto ya no existe.' };
+
+    try {
+      const txRef = doc(collection(db, 'transactions'));
+      const newTx: Transaction = {
+        id: txRef.id,
+        userId: currentUser.id,
+        type: 'CONSUMPTION',
+        amountUSD: Math.round(product.priceUSD * quantity * 100) / 100,
+        date: new Date().toISOString(),
+        status: 'PENDING',
+        productId,
+        quantity
+      };
+      await setDoc(txRef, newTx);
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: 'No se pudo reportar el consumo. Intenta de nuevo.' };
+    }
+  };
+
+  // Confirma un consumo reportado por un cliente. Lee el estado real en
+  // Firestore dentro de la transacción (evita doble aprobación) y recalcula
+  // el monto con el precio REAL del producto, no el que escribió el cliente.
+  const approveConsumption = async (transactionId: string): Promise<RegisterResult> => {
+    const txRef = doc(db, 'transactions', transactionId);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const txSnap = await transaction.get(txRef);
+        if (!txSnap.exists()) throw new Error('La solicitud ya no existe.');
+        const tx = txSnap.data() as Transaction;
+        if (tx.type !== 'CONSUMPTION' || tx.status !== 'PENDING') {
+          throw new Error('Esa solicitud ya no está pendiente.');
+        }
+
+        const qty = Number(tx.quantity);
+        if (!tx.productId || !Number.isInteger(qty) || qty < 1) {
+          throw new Error('Datos de la solicitud inválidos.');
+        }
+
+        const productRef = doc(db, 'products', tx.productId);
+        const productSnap = await transaction.get(productRef);
+        if (!productSnap.exists()) throw new Error('El producto ya no existe.');
+        const product = productSnap.data() as Product;
+
+        if (product.stock < qty) {
+          throw new Error(`Stock insuficiente de "${product.name}" (disponible: ${product.stock}).`);
+        }
+
+        const amountUSD = Math.round(product.priceUSD * qty * 100) / 100;
+
+        transaction.update(txRef, { status: 'COMPLETED', amountUSD });
+        transaction.update(doc(db, 'users', tx.userId), { balanceUSD: increment(amountUSD) });
+        transaction.update(productRef, { stock: increment(-qty) });
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'No se pudo confirmar el consumo.' };
+    }
+  };
+
+  const rejectConsumption = async (transactionId: string): Promise<RegisterResult> => {
+    const txRef = doc(db, 'transactions', transactionId);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const txSnap = await transaction.get(txRef);
+        if (!txSnap.exists()) throw new Error('La solicitud ya no existe.');
+        const tx = txSnap.data() as Transaction;
+        if (tx.type !== 'CONSUMPTION' || tx.status !== 'PENDING') {
+          throw new Error('Esa solicitud ya no está pendiente.');
+        }
+        transaction.update(txRef, { status: 'REJECTED' });
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'No se pudo rechazar la solicitud.' };
+    }
+  };
+
   const reportPayment = async (userId: string, amountUSD: number, reference: string): Promise<RegisterResult> => {
     try {
       const txRef = doc(collection(db, 'transactions'));
@@ -321,31 +426,45 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const approvePayment = async (transactionId: string): Promise<RegisterResult> => {
+    const txRef = doc(db, 'transactions', transactionId);
     try {
-      const tx = transactions.find(t => t.id === transactionId);
-      if (!tx) return { success: false, error: 'La transacción ya no existe.' };
-      await updateDoc(doc(db, 'transactions', transactionId), { status: 'COMPLETED' });
-      await updateDoc(doc(db, 'users', tx.userId), { balanceUSD: increment(-tx.amountUSD) });
+      await runTransaction(db, async (transaction) => {
+        const txSnap = await transaction.get(txRef);
+        if (!txSnap.exists()) throw new Error('La transacción ya no existe.');
+        const tx = txSnap.data() as Transaction;
+        if (tx.type !== 'PAYMENT' || tx.status !== 'PENDING') {
+          throw new Error('Ese pago ya fue procesado.');
+        }
+        transaction.update(txRef, { status: 'COMPLETED' });
+        transaction.update(doc(db, 'users', tx.userId), { balanceUSD: increment(-tx.amountUSD) });
+      });
       return { success: true };
     } catch (e: any) {
-      return { success: false, error: 'No se pudo aprobar el pago. Intenta de nuevo.' };
+      return { success: false, error: e?.message || 'No se pudo aprobar el pago. Intenta de nuevo.' };
     }
   };
- 
 
   const rejectPayment = async (transactionId: string): Promise<RegisterResult> => {
+    const txRef = doc(db, 'transactions', transactionId);
     try {
-      await updateDoc(doc(db, 'transactions', transactionId), { status: 'REJECTED' });
+      await runTransaction(db, async (transaction) => {
+        const txSnap = await transaction.get(txRef);
+        if (!txSnap.exists()) throw new Error('La transacción ya no existe.');
+        const tx = txSnap.data() as Transaction;
+        if (tx.type !== 'PAYMENT' || tx.status !== 'PENDING') {
+          throw new Error('Ese pago ya fue procesado.');
+        }
+        transaction.update(txRef, { status: 'REJECTED' });
+      });
       return { success: true };
     } catch (e: any) {
-      return { success: false, error: 'No se pudo rechazar el pago. Intenta de nuevo.' };
+      return { success: false, error: e?.message || 'No se pudo rechazar el pago. Intenta de nuevo.' };
     }
   };
 
   const updateExchangeRate = async (rate: number): Promise<RegisterResult> => {
     try {
-      // setDoc con merge en vez de updateDoc: no falla si config/global
-      // todavía no existiera por alguna razón.
+      // setDoc con merge: no falla si config/global todavía no existiera.
       await setDoc(doc(db, 'config', 'global'), { exchangeRate: rate }, { merge: true });
       return { success: true };
     } catch (e: any) {
@@ -371,11 +490,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       const batch = writeBatch(db);
       let updated = 0;
       let created = 0;
- 
+
       rows.forEach(row => {
         const cleanName = row.name.trim().toUpperCase();
         const existing = products.find(p => p.name.toUpperCase() === cleanName);
- 
+
         if (existing) {
           const patch: Partial<Product> = { stock: row.stock };
           if (row.priceUSD !== undefined && !isNaN(row.priceUSD)) {
@@ -395,17 +514,17 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           created++;
         }
       });
- 
+
       await batch.commit();
       return { updated, created };
     } catch (e: any) {
       return { updated: 0, created: 0, error: 'No se pudo importar el archivo. Verifica el formato.' };
     }
-    
   };
 
   const value: AppContextType = {
     currentUser,
+    authLoading,
     users,
     products,
     transactions,
@@ -414,6 +533,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     register,
     logout,
     addConsumption,
+    requestConsumption,
+    approveConsumption,
+    rejectConsumption,
     reportPayment,
     approvePayment,
     rejectPayment,
@@ -437,6 +559,6 @@ export const useAppContext = () => {
   return context;
 };
 
-export const useApp = useAppContext;
+export const useApp = useAppContext; // alias de compatibilidad con los componentes existentes
 
 export default AppContext;
