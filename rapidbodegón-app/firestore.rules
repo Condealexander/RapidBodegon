@@ -56,10 +56,9 @@ service cloud.firestore {
       // it COMPLETED themselves.
       allow create: if isAdmin()
         || (isSignedIn()
-            && request.resource.data.userId == request.auth.uid
-            && request.resource.data.status == 'PENDING'
-            && (
-              request.resource.data.type == 'PAYMENT'
+            //&& request.resource.data.userId == request.auth.uid
+            //&& request.resource.data.status == 'PENDING'
+            //&& (request.resource.data.type == 'PAYMENT'
               || (request.resource.data.type == 'CONSUMPTION'
                   && request.resource.data.productId is string
                   && request.resource.data.quantity is int

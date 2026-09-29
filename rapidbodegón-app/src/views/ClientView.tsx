@@ -10,7 +10,7 @@ import { Card, CardHeader, CardContent, Button, Input, Label } from '../componen
 // aprobar/rechazar consumos pendientes y las reglas de Firestore permitan
 // crear CONSUMPTION en estado PENDING. Si no, las solicitudes se acumulan
 // sin que nadie las vea.
-const ENABLE_CONSUMPTION_REPORT = true;
+const ENABLE_CONSUMPTION_REPORT = false;
 
 const STATUS_UI: Record<string, { label: string; className: string }> = {
   PENDING: { label: 'En validación', className: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' },
