@@ -1,11 +1,45 @@
-import { User, Product, AppConfig, Transaction } from '../types';
+#!/usr/bin/env node
+/**
+ * Fase 1 — Importa el catálogo REAL de 42 productos (extraído de tu Google
+ * Sheet "CONTROL") a la colección `products` de Firestore, y borra los 8
+ * productos de prueba viejos (p1..p8) que ya no existen en tu inventario
+ * real.
+ *
+ * Es seguro re-correrlo: los productos se sobrescriben (merge: true) por id,
+ * así que si corriges un precio aquí abajo y vuelves a correr el script, se
+ * actualiza sin duplicar nada.
+ *
+ * IMPORTANTE: el stock de cada producto se importa en 100 unidades por
+ * defecto (tu hoja no tenía existencias reales, solo unidades vendidas del
+ * corte). Ajusta las cantidades reales después desde el panel Admin →
+ * Inventario.
+ *
+ * Uso (con Application Default Credentials, igual que create-admin.mjs):
+ *   node scripts/import-products.mjs --project=rapidbodegon
+ */
+import { initializeApp, applicationDefault } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
 
-// NOTE: mockUsers is no longer used anywhere (AppContext.tsx now bootstraps
-export const mockUsers: User[] = [
-  { id: 'admin_root', name: 'ADMINISTRADOR', role: 'ADMIN', balanceUSD: 0 }
-];
+const rawArgs = process.argv.slice(2);
+let projectId = null;
+for (const arg of rawArgs) {
+  if (arg.startsWith('--project=')) projectId = arg.slice('--project='.length);
+}
 
-export const mockProducts: Product[] = [
+if (!projectId) {
+  console.error('Uso: node scripts/import-products.mjs --project=<project-id>');
+  process.exit(1);
+}
+
+initializeApp({ credential: applicationDefault(), projectId });
+const db = getFirestore();
+
+// Productos de prueba (Fase 0) que se reemplazan por el catálogo real.
+const oldPlaceholderIds = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'];
+
+// Catálogo real — mismos datos que src/data/mock.ts (mantenlos sincronizados
+// si agregas o quitas productos más adelante).
+const products = [
   { id: 'chesstriss', name: 'CHESSTRISS', priceUSD: 1.5, stock: 100 },
   { id: 'tom', name: 'TOM', priceUSD: 1.5, stock: 100 },
   { id: 'pepito', name: 'PEPITO', priceUSD: 1.0, stock: 100 },
@@ -50,15 +84,27 @@ export const mockProducts: Product[] = [
   { id: 'croissant', name: 'CROISSANT', priceUSD: 1.0, stock: 100 },
 ];
 
-export const mockConfig: AppConfig = {
-  exchangeRate: 45.30,
-  cutoffDays: 5,
-  bankDetails: {
-    bank: 'Banco Mercantil',
-    owner: 'MICHAEL YANEZ',
-    idCard: 'V-25033043',
-    phone: '04242404388'
-  }
-};
+async function main() {
+  const batch = db.batch();
 
-export const mockTransactions: Transaction[] = [];
+  for (const oldId of oldPlaceholderIds) {
+    const ref = db.collection('products').doc(oldId);
+    batch.delete(ref);
+  }
+
+  for (const product of products) {
+    const ref = db.collection('products').doc(product.id);
+    batch.set(ref, product, { merge: true });
+  }
+
+  await batch.commit();
+
+  console.log(`Listo: ${products.length} productos reales importados y ${oldPlaceholderIds.length} productos de prueba eliminados en "${projectId}".`);
+  console.log('Recuerda ajustar el stock real de cada producto desde Admin → Inventario (se importó todo en 100 por defecto).');
+  process.exit(0);
+}
+
+main().catch((err) => {
+  console.error('Error al importar productos:', err);
+  process.exit(1);
+});
