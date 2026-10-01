@@ -93,6 +93,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
   const [config, setConfig] = useState<AppConfig>(mockConfig);
   const [cycles, setCycles] = useState<Cycle[]>([]);
+  const [transactionsReady, setTransactionsReady] = useState(false);
+  const [cyclesReady, setCyclesReady] = useState(false);
 
   const registeringRef = useRef(false);
   // Evita lanzar el cierre de ciclos más de una vez por sesión.
@@ -198,19 +200,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Transactions
   useEffect(() => {
-    if (!authReady || !currentUser) return;
+    if (!authReady || !currentUser) {
+      setTransactionsReady(false);
+      return;
+    }
+    setTransactionsReady(false);
 
     const txCol = collection(db, 'transactions');
     const txQuery = currentUser.role === 'ADMIN'
       ? query(txCol, orderBy('date', 'desc'), limit(1000))
       : query(txCol, where('userId', '==', currentUser.id));
 
-    const unsub = onSnapshot(txQuery, (snapshot) => {
-      const list: Transaction[] = [];
-      snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Transaction));
-      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      setTransactions(list);
-    }, (error) => console.warn('Firestore transactions listener warning:', error));
+    const unsub = onSnapshot(
+      txQuery,
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        const list: Transaction[] = [];
+        snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Transaction));
+        list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        setTransactions(list);
+        if (!snapshot.metadata.fromCache) setTransactionsReady(true);
+      },
+      (error) => console.warn('Firestore transactions listener warning:', error)
+    );
     return () => unsub();
   }, [authReady, currentUser?.id, currentUser?.role]);
 
@@ -226,14 +238,20 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Cycles (solo el admin puede leerlos y cerrarlos — ver firestore.rules)
   useEffect(() => {
-    if (!authReady || !currentUser || currentUser.role !== 'ADMIN') return;
+    if (!authReady || !currentUser || currentUser.role !== 'ADMIN') {
+      setCyclesReady(false);
+      return;
+    }
+    setCyclesReady(false);
     const cyclesCol = collection(db, 'cycles');
     const unsub = onSnapshot(
       query(cyclesCol, orderBy('periodEnd', 'desc'), limit(24)),
+      { includeMetadataChanges: true },
       (snapshot) => {
         const list: Cycle[] = [];
         snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Cycle));
         setCycles(list);
+        if (!snapshot.metadata.fromCache) setCyclesReady(true);
       },
       (error) => console.warn('Firestore cycles listener warning:', error)
     );
@@ -246,11 +264,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   // llegar la fecha de corte (no hay backend corriendo solo) — se pone al
   // día la primera vez que un admin abre el panel después del corte.
   useEffect(() => {
-    if (!currentUser || currentUser.role !== 'ADMIN') return;
+    if (!authReady || !currentUser || currentUser.role !== 'ADMIN') return;
     if (cycleCloseAttemptedRef.current) return;
-    // Espera a que el listener de transacciones haya entregado algo (evita
-    // cerrar ciclos con totales en $0 solo porque todavía no cargó nada).
-    if (transactions.length === 0 && users.length === 0) return;
+    if (!transactionsReady || !cyclesReady) return;
 
     cycleCloseAttemptedRef.current = true;
 
@@ -277,19 +293,25 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           .reduce((acc, t) => acc + t.amountUSD, 0);
 
         try {
-          await setDoc(doc(db, 'cycles', period.id), {
-            periodStart: period.start.toISOString(),
-            periodEnd: period.end.toISOString(),
-            totalCollected,
-            totalConsumption,
-            closedAt: new Date().toISOString()
+          await runTransaction(db, async (transaction) => {
+            const cycleRef = doc(db, 'cycles', period.id);
+            const cycleSnapshot = await transaction.get(cycleRef);
+            if (cycleSnapshot.exists()) return;
+
+            transaction.set(cycleRef, {
+              periodStart: period.start.toISOString(),
+              periodEnd: period.end.toISOString(),
+              totalCollected,
+              totalConsumption,
+              closedAt: new Date().toISOString()
+            });
           });
         } catch (e) {
           console.warn('No se pudo cerrar el ciclo', period.id, e);
         }
       }
     })();
-  }, [currentUser?.id, currentUser?.role, cycles, transactions, users]);
+  }, [authReady, currentUser?.id, currentUser?.role, cycles, cyclesReady, transactions, transactionsReady]);
 
   useEffect(() => {
     if (currentUser?.role === 'ADMIN') {

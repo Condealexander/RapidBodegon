@@ -444,7 +444,8 @@ export const ClientView = () => {
                       <div>
                         <p className="font-medium text-white">{formatCurrency(tx.amountUSD)}</p>
                         <p className="text-xs text-slate-500">
-                          {new Date(tx.date).toLocaleDateString()} • Ref: {tx.reference}
+                          {new Date(tx.date).toLocaleDateString()} • Ref:{' '}
+                          <span className="font-semibold text-slate-300">{tx.reference}</span>
                         </p>
                       </div>
                       <StatusBadge status={tx.status} />
