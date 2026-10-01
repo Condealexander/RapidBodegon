@@ -64,5 +64,12 @@
 /* Inputs y selects (heredan de components/ui.tsx, casi siempre bg-slate-900) */
 :root[data-theme='light'] input,
 :root[data-theme='light'] select {
+  color: #1e293b !important;
   color-scheme: light;
+}
+
+:root[data-theme='light'] input::placeholder,
+:root[data-theme='light'] textarea::placeholder {
+  color: #64748b !important;
+  opacity: 1;
 }
