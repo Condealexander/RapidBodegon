@@ -127,11 +127,13 @@ incluyas credenciales de Firebase Admin en el cliente.
 npm install
 npm run dev
 npm run build
+npm run analyze
 ```
 
 El build de producción se genera en `dist/`. Vite separa Recharts y SheetJS
 en chunks propios. `package.json` no define actualmente un script de pruebas
-automatizadas.
+automatizadas. `npm run analyze` genera `dist/stats.html` con el detalle de
+composición y tamaño de cada bundle; no forma parte del build normal.
 
 ## Despliegue
 

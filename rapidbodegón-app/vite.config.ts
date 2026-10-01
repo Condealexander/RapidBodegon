@@ -1,11 +1,18 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { visualizer } from 'rollup-plugin-visualizer';
 import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      ...(process.env.ANALYZE === 'true'
+        ? [visualizer({ filename: 'dist/stats.html', open: false, gzipSize: true, brotliSize: true })]
+        : []),
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
@@ -22,6 +29,12 @@ export default defineConfig(() => {
       rollupOptions: {
         output: {
           manualChunks: {
+              // Separa los SDK que inflan el chunk inicial, sin agrupar React
+              // manualmente (Vite ya comparte esos módulos con sus dependientes).
+              'firebase-auth': ['firebase/auth'],
+              'firebase-firestore': ['firebase/firestore'],
+              'firebase-app': ['firebase/app'],
+              'firebase-re2': ['re2js'],
             // Estas dos librerías solo las usa AdminView.tsx y pesan mucho.
             // Separarlas en su propio archivo significa que un cliente
             // normal (que nunca abre el panel de admin) no las descarga.
