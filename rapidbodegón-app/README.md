@@ -1,86 +1,105 @@
 # RapidBodegón
+Sistema interno de gestión de crédito, pagos, inventario y cobranza. Los
+clientes consultan su cuenta y reportan pagos; el administrador gestiona
+consumos, conciliación, productos, tasa de cambio y cierres de ciclo.
 
-Sistema de gestión de crédito y cobranza para un bodegón interno. Los clientes
-consumen a crédito, reportan sus pagos, y el administrador concilia todo desde
-un panel central.
-
-**App en producción:** https://rapid-bodegon-alexyanez1993-5085.vercel.app
-
----
+**Aplicación:** https://rapid-bodegon-alexyanez1993-5085.vercel.app
 
 ## Stack
 
-- **Frontend:** React + TypeScript, empaquetado con Vite
-- **Estilos:** Tailwind CSS
-- **Backend:** Firebase (Authentication + Firestore), sin servidor propio
-- **Gráficos:** Recharts (solo en el panel de admin)
-- **Importación de inventario:** SheetJS (`xlsx`)
-- **Hosting:** Vercel
+- React 19 y TypeScript, compilados con Vite 6.
+- Tailwind CSS 4.
+- Firebase Authentication y Cloud Firestore; no hay servidor propio.
+- Recharts para los gráficos administrativos.
+- SheetJS (`xlsx`) para importar inventario.
+- Vercel para hosting; `main` está configurada como rama de producción.
 
-No hay backend propio: toda la lógica de negocio vive en el cliente
-(`src/store/AppContext.tsx`) y se apoya en las reglas de seguridad de
-Firestore para que cada usuario solo pueda hacer lo que le corresponde.
+La lógica compartida de negocio está principalmente en
+`src/store/AppContext.tsx`. Las vistas viven en `src/views/`, los componentes
+comunes en `src/components/`, los tipos en `src/types/` y la autorización de
+Firestore en `firestore.rules`.
 
----
+## Acceso y roles
 
-## Cómo iniciar sesión
+El usuario inicia sesión con nombre y PIN; no necesita un correo real. La app
+normaliza el nombre y deriva un correo sintético para Firebase Authentication.
+Por ejemplo, `JUAN PEREZ` se convierte en `JUANPEREZ@rapidbodegon.local`. El
+registro de clientes requiere un PIN de al menos 8 caracteres. Las cuentas
+`ADMIN` se crean o actualizan mediante un script con Firebase Admin SDK, nunca
+desde el código cliente.
 
-No se usa email real. Cada persona se identifica con **Nombre + PIN**, y por
-debajo eso se traduce a un correo sintético para Firebase Auth:
+### Cliente
 
-```
-JUAN PEREZ  →  JUANPEREZ@rapidbodegon.local
-```
+- Consulta el saldo pendiente en USD y su conversión a bolívares según la tasa
+  configurada; ve el estado de cuenta y el próximo corte.
+- Consulta los datos de pago móvil/transferencia, copia campos individuales o
+  copia todos los datos bancarios juntos.
+- Reporta pagos con monto y referencia bancaria. Los reportes quedan pendientes
+  hasta que el administrador los valide.
+- Consulta el historial de pagos y consumos, y recibe un onboarding inicial y
+  un aviso de privacidad.
+- Ve los precios de productos disponibles; los productos con stock menor o
+  igual a cero no aparecen.
+- Puede cambiar entre tema claro y oscuro.
 
-El PIN mínimo es de **8 caracteres**. La cuenta `ADMIN` nunca se crea desde
-la app — se crea y se rota con un script server-side (ver más abajo).
+El flujo para que el cliente reporte su propio consumo existe en el código,
+pero está desactivado por `ENABLE_CONSUMPTION_REPORT = false` en
+`src/views/ClientView.tsx`.
 
----
+### Administrador
 
-## Roles
+- Consulta el crédito global por cobrar, la recaudación del ciclo actual y el
+  estado de clientes; puede buscar clientes por nombre.
+- Revisa gráficos de ventas diarias y los cinco clientes con mayor consumo.
+- Registra consumos a crédito. La operación actualiza transacción, saldo del
+  cliente y stock mediante una transacción de Firestore.
+- Aprueba o rechaza pagos y solicitudes de consumo pendientes.
+- Ajusta stock manualmente o importa `.xlsx`, `.xls` y `.csv` con las columnas
+  `PRODUCTO` y `STOCK`, y una columna opcional `PRECIO`.
+- Actualiza la tasa de cambio y consulta el historial de ciclos de cobro.
+- Puede cambiar entre tema claro y oscuro.
 
-### CLIENTE
-- Ve su saldo pendiente en USD y en bolívares (según la tasa del día).
-- Ve los datos de pago móvil / transferencia del negocio.
-- Reporta un pago (queda `PENDING` hasta que el admin lo valida).
-- Ve el historial de sus propios consumos y de sus pagos reportados.
+## Ciclos de cobro
 
-### ADMIN
-- Ve el crédito global por cobrar, lo recaudado, y el estado de todos los clientes.
-- Gráficos de ventas diarias y top 5 clientes por consumo.
-- Carga el consumo de un cliente (descuenta stock, suma su deuda).
-- Aprueba o rechaza pagos reportados.
-- Ajusta el stock manualmente o lo importa desde un Excel/CSV.
-- Ajusta la tasa de cambio.
+Los cortes ocurren los días 3, 10, 17 y 25 de cada mes. La app calcula el
+próximo corte y los días restantes. Al abrir el panel administrativo, busca
+ciclos vencidos que falten y calcula los pagos y consumos completados dentro
+del período. El proceso espera los snapshots iniciales confirmados por el
+servidor y crea cada cierre en una transacción únicamente si todavía no existe.
 
-La cuenta `ADMIN` se crea una sola vez con `scripts/create-admin.mjs` y nunca
-a través del cliente — así su contraseña nunca viaja en el bundle de JS que
-descarga el navegador.
+No es una tarea de servidor programada: para ponerse al día, un administrador
+debe abrir la aplicación después de un corte. Se revisan hasta 12 ciclos
+anteriores consecutivos y se detiene el recorrido al encontrar uno ya cerrado.
 
----
+## Datos de Firestore
 
-## Modelo de datos (Firestore)
-
-| Colección | Descripción |
+| Colección | Campos principales |
 |---|---|
-| `users/{uid}` | `{ id, name, role: 'ADMIN'\|'CLIENT', balanceUSD }` |
-| `products/{id}` | `{ id, name, priceUSD, stock }` |
-| `transactions/{id}` | `{ id, userId, type: 'CONSUMPTION'\|'PAYMENT', amountUSD, date, status: 'PENDING'\|'COMPLETED'\|'REJECTED', productId?, quantity?, reference? }` |
-| `config/global` | `{ exchangeRate, cutoffDays, bankDetails }` |
+| `users/{uid}` | `id`, `name`, `role` (`ADMIN` o `CLIENT`), `balanceUSD` |
+| `products/{id}` | `id`, `name`, `priceUSD`, `stock` |
+| `transactions/{id}` | `userId`, `type` (`CONSUMPTION` o `PAYMENT`), `amountUSD`, `date`, `status` (`PENDING`, `COMPLETED` o `REJECTED`), `productId?`, `quantity?`, `reference?` |
+| `config/global` | `exchangeRate`, `cutoffDays`, `bankDetails` |
+| `cycles/{id}` | `periodStart`, `periodEnd`, `totalCollected`, `totalConsumption`, `closedAt` |
 
-**Reglas de seguridad** (`firestore.rules`), resumidas:
-- Un cliente solo puede leer y escribir su propio documento en `users`.
-- Un cliente puede crear un `PAYMENT` propio en `PENDING`, nunca marcarlo `COMPLETED`.
-- Solo el admin puede aprobar/rechazar transacciones, escribir en `products` y `config`.
-- Todo lo que no está explícitamente permitido, se deniega por defecto.
+## Seguridad: limitación actual
 
----
+`firestore.rules` restringe por rol el acceso a perfiles, productos,
+configuración y ciclos. **La regla actual `allow create` de `transactions` es
+más permisiva que el flujo esperado:** las condiciones que limitan al cliente
+a crear solo transacciones propias y con estado `PENDING` están comentadas.
+Tal como está escrita, cualquier usuario autenticado puede crear documentos
+de transacción que la interfaz no permitiría.
+
+La validación de la interfaz no sustituye las reglas de Firestore. Antes de
+confiar en esta restricción en producción, corrige la regla para validar UID,
+tipo, estado y campos permitidos, y prueba el acceso con los roles cliente y
+administrador. Esta documentación no modifica las reglas.
 
 ## Scripts administrativos
 
-Viven en `scripts/`, usan el **Firebase Admin SDK** (bypasean las reglas de
-Firestore) y corren desde tu máquina o Codespace, nunca desde el navegador.
-Requieren haber corrido antes:
+Los scripts de `scripts/` usan Firebase Admin SDK, que evita las reglas de
+Firestore. Ejecútalos solo desde una máquina o Codespace autorizado, nunca
+desde el navegador. Para Application Default Credentials:
 
 ```bash
 gcloud auth application-default login
@@ -88,73 +107,44 @@ gcloud auth application-default login
 
 | Script | Uso |
 |---|---|
-| `create-admin.mjs` | Crea la cuenta ADMIN o rota su PIN. `node scripts/create-admin.mjs "ADMINISTRADOR" "unPinDe8Digitos" --project=rapidbodegon` |
-| `reset-pin.mjs` | Resetea el PIN de un **cliente** que lo olvidó, sin tocar su rol ni su saldo. `node scripts/reset-pin.mjs "JUAN PEREZ" "nuevoPinDe8Digitos" --project=rapidbodegon` |
-| `seed-data.mjs` | Siembra el catálogo inicial de productos y `config/global`. `node scripts/seed-data.mjs --project=rapidbodegon` |
+| `create-admin.mjs` | Crear cuenta admin o actualizar su PIN: `node scripts/create-admin.mjs "ADMINISTRADOR" "pinSeguro" --project=rapidbodegon` |
+| `reset-pin.mjs` | Cambiar el PIN de un cliente sin alterar su perfil o saldo: `node scripts/reset-pin.mjs "JUAN PEREZ" "nuevoPinDe8Digitos" --project=rapidbodegon` |
+| `seed-data.mjs` | Cargar productos iniciales de ejemplo y `config/global`: `node scripts/seed-data.mjs --project=rapidbodegon` |
+| `import-products.mjs` | Eliminar los productos de prueba `p1` a `p8` e importar el catálogo del script: `node scripts/import-products.mjs --project=rapidbodegon` |
 
----
+El importador asigna stock inicial de 100 unidades. Revisa los cambios que
+hará cada script y actualiza las existencias reales desde el panel de
+inventario antes de operar.
 
 ## Desarrollo local
+
+Requiere Node.js, Firebase Authentication (Email/Password) y Firestore. La
+configuración de Firebase se importa desde `firebase-applet-config.json` a
+través de `src/firebase.ts`; apunta el archivo al proyecto correcto y no
+incluyas credenciales de Firebase Admin en el cliente.
 
 ```bash
 npm install
 npm run dev
-```
-
-Necesitas un archivo de configuración de Firebase (`src/firebase.ts`) apuntando
-a tu propio proyecto de Firebase, con Authentication (Email/Password) y
-Firestore habilitados.
-
-### Build de producción
-
-```bash
 npm run build
 ```
 
-`vite.config.ts` separa `recharts` y `xlsx` en chunks aparte (`manualChunks`),
-así un cliente normal —que nunca entra al panel de admin— no los descarga.
+El build de producción se genera en `dist/`. Vite separa Recharts y SheetJS
+en chunks propios. `package.json` no define actualmente un script de pruebas
+automatizadas.
 
----
+## Despliegue
 
-## Deploy
+Vercel despliega desde la rama `main` según la configuración del proyecto.
+Un push inicia el despliegue, pero verifica su estado antes de considerar el
+cambio disponible en producción. El dominio documentado es
+`rapid-bodegon-alexyanez1993-5085.vercel.app`.
 
-Desplegado en Vercel, rama `main` → producción automática. En **Settings →
-Deployment Protection** está en modo **Standard Protection** (protege las
-URLs de preview/deployment individuales, pero deja abierto el dominio de
-producción para que los clientes puedan entrar sin loguearse en Vercel).
+## Documentación adicional
 
-Dominio de producción actual: `rapid-bodegon-alexyanez1993-5085.vercel.app`
-(el sufijo viene del team de Vercel; se puede reemplazar por un dominio
-propio más adelante conectándolo en el mismo proyecto).
-
----
-
-## Estado actual / pendientes conocidos
-
-- **Reporte de consumo por el cliente:** el código existe completo
-  (`requestConsumption` en `AppContext.tsx`, tarjeta "Reportar lo que tomé"
-  en `ClientView.tsx`, tarjeta "Consumos por Confirmar" en `AdminView.tsx`),
-  pero está **desactivado a propósito** detrás de un flag mientras se decide
-  darle más control al flujo:
-  ```typescript
-  // src/views/ClientView.tsx
-  const ENABLE_CONSUMPTION_REPORT = false;
-  ```
-  Para reactivarlo: poner el flag en `true` y volver a permitir `CONSUMPTION`
-  en el `allow create` de `transactions` en `firestore.rules` (ver el
-  historial de commits para la regla exacta).
-- **"Próximo corte de cobro"** (`config.cutoffDays`) es un número fijo, no
-  una fecha real — siempre muestra el mismo valor, no cuenta regresiva de
-  verdad. Falta un campo tipo `nextCutoffDate` para que sea funcional.
-- **"Recaudado (Ciclo Actual)"** en el panel de admin suma *todos* los pagos
-  históricos, no solo los del ciclo actual — no hay todavía un concepto de
-  cierre de ciclo.
-- **Sin recuperación de PIN por el cliente mismo** (usa `reset-pin.mjs`, a
-  pedido, hasta que exista un flujo propio).
-- **Sin backups automáticos de Firestore** configurados todavía.
-- **Sin dominio propio** — usando el subdominio gratuito de Vercel.
-
----
+- `memory.md`: contexto técnico y arquitectura del repositorio.
+- `agent.md`: pautas de trabajo para futuras modificaciones; es documentación
+  normal, no un agente personalizado seleccionable en VS Code.
 
 ## Licencia
 
