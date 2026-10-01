@@ -1,3 +1,7 @@
+---
+name: RapidBodegon
+description: "Asistente para desarrollar y mantener la aplicación RapidBodegón."
+---
 # Pautas de trabajo para el agente
 
 Estas pautas documentan cómo realizar cambios en RapidBodegón. Para detalles del stack y el modelo, consultar también `memory.md`.
