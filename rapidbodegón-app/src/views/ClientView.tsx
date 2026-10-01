@@ -46,6 +46,7 @@ export const ClientView = () => {
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState('');
 
   const [consProductId, setConsProductId] = useState('');
   const [consQty, setConsQty] = useState('1');
@@ -73,15 +74,27 @@ export const ClientView = () => {
 
   const nextCutoff = getNextCutoff();
   const daysLeft = daysUntilNextCutoff();
+  const bankDetails = [
+    { key: 'bank', label: 'Banco', value: config.bankDetails.bank },
+    { key: 'owner', label: 'Titular', value: config.bankDetails.owner },
+    { key: 'idCard', label: 'Cédula / RIF', value: config.bankDetails.idCard },
+    { key: 'phone', label: 'Teléfono', value: config.bankDetails.phone },
+  ];
 
   const handleCopy = async (key: string, text: string) => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedKey(key);
+      setCopyError('');
       setTimeout(() => setCopiedKey(null), 1500);
     } catch {
-      setPaymentError('No se pudo copiar. Cópialo manualmente.');
+      setCopyError('No se pudo copiar. Cópialo manualmente.');
     }
+  };
+
+  const handleCopyAllBankDetails = () => {
+    const text = bankDetails.map(({ label, value }) => `${label}: ${value}`).join('\n');
+    void handleCopy('all', text);
   };
 
   const handleReportPayment = async (e: React.FormEvent) => {
@@ -213,15 +226,18 @@ export const ClientView = () => {
           </Card>
 
           <Card>
-            <CardHeader title="Datos para Pago Móvil / Transferencia" />
+            <CardHeader
+              title="Datos para Pago Móvil / Transferencia"
+              action={
+                <Button variant="secondary" className="px-3 py-1.5 text-xs" onClick={handleCopyAllBankDetails}>
+                  {copiedKey === 'all' ? <Check size={14} className="mr-1 text-emerald-400" /> : <Copy size={14} className="mr-1" />}
+                  {copiedKey === 'all' ? 'Copiado' : 'Copiar todo'}
+                </Button>
+              }
+            />
             <CardContent>
               <div className="space-y-3">
-                {[
-                  { key: 'bank', label: 'Banco', value: config.bankDetails.bank },
-                  { key: 'owner', label: 'Titular', value: config.bankDetails.owner },
-                  { key: 'idCard', label: 'Cédula / RIF', value: config.bankDetails.idCard },
-                  { key: 'phone', label: 'Teléfono', value: config.bankDetails.phone },
-                ].map(item => (
+                {bankDetails.map(item => (
                   <div key={item.key} className="flex items-center justify-between p-3 rounded-lg bg-slate-900 border border-slate-800">
                     <div>
                       <p className="text-xs text-slate-500">{item.label}</p>
@@ -240,6 +256,9 @@ export const ClientView = () => {
                   </div>
                 ))}
               </div>
+              {copyError && (
+                <p role="alert" className="mt-3 text-sm text-red-400">{copyError}</p>
+              )}
               <div className="mt-4 flex items-start gap-2 p-3 bg-blue-500/10 rounded-lg text-blue-400 text-sm">
                 <Info size={16} className="shrink-0 mt-0.5" />
                 <p>
@@ -255,10 +274,12 @@ export const ClientView = () => {
             <CardHeader title="Catálogo y Precios" subtitle="Lo que hay disponible en el bodegón" />
             <CardContent className="p-0">
               <div className="divide-y divide-slate-800 max-h-[280px] overflow-y-auto">
-                {products.length === 0 ? (
-                  <div className="p-6 text-center text-slate-500">Aún no hay productos cargados.</div>
+                {availableProducts.length === 0 ? (
+                  <div className="p-6 text-center text-slate-500">
+                    {products.length === 0 ? 'Aún no hay productos cargados.' : 'No hay productos disponibles en este momento.'}
+                  </div>
                 ) : (
-                  products.map(product => (
+                  availableProducts.map(product => (
                     <div key={product.id} className="p-3 flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="p-2 bg-slate-800 rounded text-slate-400">
@@ -266,9 +287,6 @@ export const ClientView = () => {
                         </div>
                         <div>
                           <p className="font-medium text-slate-200">{product.name}</p>
-                          {product.stock <= 0 && (
-                            <p className="text-xs text-red-400">Agotado</p>
-                          )}
                         </div>
                       </div>
                       <p className="font-mono text-slate-300">{formatCurrency(product.priceUSD)}</p>
