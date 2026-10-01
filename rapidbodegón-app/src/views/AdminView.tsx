@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
+import { getNextCutoff, getPreviousCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
 import {
   Users, DollarSign, Wallet, Calendar, Plus,
   CheckCircle2, XCircle, Search, Clock, LogOut, BarChart3,
-  Package, Upload, Save, Receipt, AlertCircle
+  Package, Upload, Save, Receipt, AlertCircle, History
 } from 'lucide-react';
-import { Card, CardHeader, CardContent, Button, Input, Label } from '../components/ui';
+import { Card, CardHeader, CardContent, Button, Input, Label } from '../components';
+import { ThemeToggle } from '../components/ThemeToggle';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
@@ -22,7 +24,7 @@ const dayKey = (iso: string) => {
 
 export const AdminView = () => {
   const {
-    users, products, transactions, config, logout,
+    users, products, transactions, config, cycles, logout,
     addConsumption, updateExchangeRate, approvePayment, rejectPayment,
     approveConsumption, rejectConsumption,
     updateProductStock, importProducts
@@ -36,17 +38,13 @@ export const AdminView = () => {
   const [rateMsg, setRateMsg] = useState<string>('');
   const [consumptionError, setConsumptionError] = useState<string>('');
 
-  // Errores de acciones (aprobar/rechazar/guardar stock) y bloqueo anti doble clic
   const [actionError, setActionError] = useState<string>('');
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  // Inventory management state
   const [stockEdits, setStockEdits] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string>('');
 
-  // Mantiene el campo de tasa sincronizado con el valor real de Firestore
-  // (al montar, config todavía puede ser el valor por defecto).
   useEffect(() => {
     setNewRate(String(config.exchangeRate ?? ''));
   }, [config.exchangeRate]);
@@ -57,17 +55,20 @@ export const AdminView = () => {
   const totalCredit = clients.reduce((acc, client) => acc + client.balanceUSD, 0);
   const clientsWithDebt = clients.filter(c => c.balanceUSD > 0).length;
 
+  // Ciclo actual = desde el último corte hasta ahora. Antes esto sumaba
+  // TODO el histórico, lo cual hacía que "Recaudado (Ciclo Actual)" nunca
+  // bajara a $0 después de un corte.
+  const cycleStart = getPreviousCutoff();
   const currentCyclePayments = transactions
     .filter(t => t.type === 'PAYMENT' && t.status === 'COMPLETED')
+    .filter(t => new Date(t.date).getTime() >= cycleStart.getTime())
     .reduce((acc, t) => acc + t.amountUSD, 0);
 
   const pendingPayments = transactions.filter(t => t.type === 'PAYMENT' && t.status === 'PENDING');
   const pendingConsumptions = transactions.filter(t => t.type === 'CONSUMPTION' && t.status === 'PENDING');
 
-  // Solo consumos confirmados cuentan para las ventas.
   const consumptions = transactions.filter(t => t.type === 'CONSUMPTION' && t.status === 'COMPLETED');
 
-  // Ventas diarias: se agrupa por fecha local (YYYY-MM-DD) para poder ordenar bien.
   const dailySalesMap = consumptions.reduce((acc, curr) => {
     const key = dayKey(curr.date);
     acc[key] = (acc[key] || 0) + curr.amountUSD;
@@ -84,7 +85,6 @@ export const AdminView = () => {
       };
     });
 
-  // Client sales data
   const clientSalesMap = consumptions.reduce((acc, curr) => {
     acc[curr.userId] = (acc[curr.userId] || 0) + curr.amountUSD;
     return acc;
@@ -98,7 +98,6 @@ export const AdminView = () => {
     };
   }).sort((a, b) => b.total - a.total).slice(0, 5);
 
-  // Ejecuta una acción con bloqueo de doble clic y muestra el error si falla.
   const runAction = async (id: string, fn: () => Promise<ActionResult>) => {
     if (busyId) return;
     setBusyId(id);
@@ -215,6 +214,9 @@ export const AdminView = () => {
     }
   };
 
+  const nextCutoff = getNextCutoff();
+  const daysLeft = daysUntilNextCutoff();
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-8">
       {/* Header */}
@@ -228,6 +230,7 @@ export const AdminView = () => {
             <span className="text-xs text-slate-400">Tasa (BCV):</span>
             <span className="font-mono text-emerald-400">{formatBs(1, config.exchangeRate)}</span>
           </div>
+          <ThemeToggle />
           <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={logout}>
             <LogOut size={14} className="mr-2" /> Salir
           </Button>
@@ -247,7 +250,6 @@ export const AdminView = () => {
       )}
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        {/* KPI Cards */}
         <Card className="bg-gradient-to-br from-blue-900/50 to-slate-800 border-blue-500/20">
           <CardContent className="p-5 flex items-center gap-4">
             <div className="p-3 bg-blue-500/20 text-blue-400 rounded-lg">
@@ -271,6 +273,7 @@ export const AdminView = () => {
             <div>
               <p className="text-sm text-emerald-200/70 font-medium">Recaudado (Ciclo Actual)</p>
               <h2 className="text-2xl font-bold text-white">{formatCurrency(currentCyclePayments)}</h2>
+              <p className="text-xs text-slate-500 mt-0.5">Desde el {formatCutoffDate(cycleStart)}</p>
             </div>
           </CardContent>
         </Card>
@@ -309,7 +312,7 @@ export const AdminView = () => {
                   <Tooltip
                     cursor={{ fill: '#1e293b' }}
                     contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                    formatter={(value: number) => [formatCurrency(value), 'Total']}
+                    formatter={(value) => [formatCurrency(Number(value ?? 0)), 'Total']}
                   />
                   <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} />
                 </BarChart>
@@ -335,7 +338,7 @@ export const AdminView = () => {
                   <Tooltip
                     cursor={{ fill: '#1e293b' }}
                     contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f1f5f9' }}
-                    formatter={(value: number) => [formatCurrency(value), 'Consumo']}
+                    formatter={(value) => [formatCurrency(Number(value ?? 0)), 'Consumo']}
                   />
                   <Bar dataKey="total" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
                 </BarChart>
@@ -354,7 +357,6 @@ export const AdminView = () => {
         {/* Left Column */}
         <div className="lg:col-span-2 space-y-6">
 
-          {/* Consumos por confirmar (reportados por clientes) */}
           {pendingConsumptions.length > 0 && (
             <Card className="border-blue-500/30">
               <CardHeader
@@ -367,8 +369,6 @@ export const AdminView = () => {
                     const client = users.find(u => u.id === tx.userId);
                     const product = products.find(p => p.id === tx.productId);
                     const qty = Number(tx.quantity) || 0;
-                    // Se muestra el monto con el precio REAL del producto, no el
-                    // que escribió el cliente (al confirmar se usa este mismo cálculo).
                     const realAmount = product ? Math.round(product.priceUSD * qty * 100) / 100 : null;
                     return (
                       <div key={tx.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-blue-500/5">
@@ -417,7 +417,6 @@ export const AdminView = () => {
             </Card>
           )}
 
-          {/* Pending Payments */}
           {pendingPayments.length > 0 && (
             <Card className="border-yellow-500/30">
               <CardHeader
@@ -622,12 +621,46 @@ export const AdminView = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* Historial de ciclos de cobro */}
+          <Card>
+            <CardHeader
+              title="Historial de Ciclos de Cobro"
+              subtitle="Cortes de cuenta (días 3, 10, 17 y 25). Se registran solos al abrir este panel después de cada fecha."
+            />
+            <CardContent className="p-0">
+              <div className="divide-y divide-slate-800">
+                {cycles.length === 0 ? (
+                  <div className="p-6 text-center text-slate-500 flex flex-col items-center gap-2">
+                    <History size={24} className="opacity-30" />
+                    Todavía no se ha cerrado ningún ciclo.
+                  </div>
+                ) : (
+                  cycles.map(cycle => (
+                    <div key={cycle.id} className="p-4 flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-slate-200">
+                          {new Date(cycle.periodStart).toLocaleDateString()} → {new Date(cycle.periodEnd).toLocaleDateString()}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Cerrado el {new Date(cycle.closedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="text-right text-sm">
+                        <p className="text-emerald-400">Recaudado: {formatCurrency(cycle.totalCollected)}</p>
+                        <p className="text-blue-400">Consumo: {formatCurrency(cycle.totalConsumption)}</p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Right Column: Actions & Config */}
         <div className="space-y-6">
 
-          {/* Quick Load Consumption */}
           <Card className="border-blue-500/20">
             <CardHeader title="Cargar Consumo" subtitle="Registrar nueva compra a crédito" />
             <CardContent>
@@ -687,7 +720,6 @@ export const AdminView = () => {
             </CardContent>
           </Card>
 
-          {/* Settings */}
           <Card>
             <CardHeader title="Configuración" />
             <CardContent>
@@ -712,11 +744,9 @@ export const AdminView = () => {
                   <Calendar size={16} /> Próximo Corte de Cobro
                 </div>
                 <p className="text-sm text-slate-500">
-                  En <strong className="text-white">{config.cutoffDays} días</strong>.
+                  {formatCutoffDate(nextCutoff)} — en <strong className="text-white">{daysLeft} día{daysLeft === 1 ? '' : 's'}</strong>.
                 </p>
-                <Button variant="secondary" className="w-full mt-3 text-xs">
-                  Generar Recordatorio (.ics)
-                </Button>
+                <p className="text-xs text-slate-600 mt-1">Cortes fijos: días 3, 10, 17 y 25 de cada mes.</p>
               </div>
             </CardContent>
           </Card>

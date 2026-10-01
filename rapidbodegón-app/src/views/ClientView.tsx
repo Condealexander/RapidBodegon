@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
+import { getNextCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
 import {
-  Copy, Check, LogOut, Wallet, Info, Receipt, CheckCircle2, Clock, AlertCircle
+  Copy, Check, LogOut, Wallet, Info, Receipt, CheckCircle2, Clock, AlertCircle, ShoppingBag, CalendarClock
 } from 'lucide-react';
-import { Card, CardHeader, CardContent, Button, Input, Label } from '../components/ui';
+import { Card, CardHeader, CardContent, Button, Input, Label } from '../components';
+import { Onboarding } from '../components/ui/Onboarding';
+import { PrivacyNoticeLink } from '../components/ui/PrivacyNotice';
+import { ThemeToggle } from '../components/ThemeToggle';
 
-// Ponlo en true SOLO cuando el AdminView ya tenga los botones para
-// aprobar/rechazar consumos pendientes y las reglas de Firestore permitan
-// crear CONSUMPTION en estado PENDING. Si no, las solicitudes se acumulan
-// sin que nadie las vea.
+// Cámbialo a true solo cuando quieras que los clientes puedan reportar su
+// propio consumo (requiere también reactivar la regla en firestore.rules).
 const ENABLE_CONSUMPTION_REPORT = false;
 
 const STATUS_UI: Record<string, { label: string; className: string }> = {
@@ -36,7 +38,6 @@ export const ClientView = () => {
     logout, reportPayment, requestConsumption
   } = useApp();
 
-  // Pago
   const [currency, setCurrency] = useState<'USD' | 'BS'>('USD');
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentRef, setPaymentRef] = useState('');
@@ -44,10 +45,8 @@ export const ClientView = () => {
   const [paymentError, setPaymentError] = useState('');
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
-  // Copiar
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Reporte de consumo
   const [consProductId, setConsProductId] = useState('');
   const [consQty, setConsQty] = useState('1');
   const [consMessage, setConsMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
@@ -66,12 +65,14 @@ export const ClientView = () => {
   const rate = config.exchangeRate;
   const canUseBs = !!rate && rate > 0;
 
-  // Monto en USD que se va a reportar (convierte si el cliente pagó en Bs).
   const parsedAmount = parseFloat(paymentAmount.replace(',', '.'));
   const amountUSD =
     !isNaN(parsedAmount) && parsedAmount > 0
       ? Math.round((currency === 'BS' && canUseBs ? parsedAmount / rate : parsedAmount) * 100) / 100
       : 0;
+
+  const nextCutoff = getNextCutoff();
+  const daysLeft = daysUntilNextCutoff();
 
   const handleCopy = async (key: string, text: string) => {
     try {
@@ -151,15 +152,20 @@ export const ClientView = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-8">
+      <Onboarding userId={currentUser.id} />
+
       {/* Header */}
       <div className="max-w-4xl mx-auto flex justify-between items-center mb-8">
         <div>
           <h1 className="text-xl md:text-2xl font-bold text-white">Hola, {currentUser.name}</h1>
           <p className="text-slate-400 text-sm">Resumen de tu cuenta</p>
         </div>
-        <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={logout}>
-          <LogOut size={14} className="mr-2" /> Salir
-        </Button>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={logout}>
+            <LogOut size={14} className="mr-2" /> Salir
+          </Button>
+        </div>
       </div>
 
       <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -190,6 +196,11 @@ export const ClientView = () => {
                     ✅ AL DÍA
                   </span>
                 )}
+              </div>
+
+              <div className="mt-4 flex items-center justify-center gap-2 text-xs text-slate-500">
+                <CalendarClock size={14} />
+                Próximo corte: {formatCutoffDate(nextCutoff)} (en {daysLeft} día{daysLeft === 1 ? '' : 's'})
               </div>
 
               {pendingPaymentsAmount > 0 && (
@@ -235,6 +246,35 @@ export const ClientView = () => {
                   Tasa del día: <strong>{formatBs(1, config.exchangeRate)}</strong>.
                   Puede realizar el pago en Bs o $. Una vez realizado, repórtelo en el formulario.
                 </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Catálogo y precios */}
+          <Card>
+            <CardHeader title="Catálogo y Precios" subtitle="Lo que hay disponible en el bodegón" />
+            <CardContent className="p-0">
+              <div className="divide-y divide-slate-800 max-h-[280px] overflow-y-auto">
+                {products.length === 0 ? (
+                  <div className="p-6 text-center text-slate-500">Aún no hay productos cargados.</div>
+                ) : (
+                  products.map(product => (
+                    <div key={product.id} className="p-3 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-slate-800 rounded text-slate-400">
+                          <ShoppingBag size={16} />
+                        </div>
+                        <div>
+                          <p className="font-medium text-slate-200">{product.name}</p>
+                          {product.stock <= 0 && (
+                            <p className="text-xs text-red-400">Agotado</p>
+                          )}
+                        </div>
+                      </div>
+                      <p className="font-mono text-slate-300">{formatCurrency(product.priceUSD)}</p>
+                    </div>
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>
@@ -322,7 +362,6 @@ export const ClientView = () => {
             </CardContent>
           </Card>
 
-          {/* Reportar consumo (apagado por defecto, ver flag arriba) */}
           {ENABLE_CONSUMPTION_REPORT && (
             <Card>
               <CardHeader title="Reportar lo que tomé" />
@@ -375,7 +414,6 @@ export const ClientView = () => {
             </Card>
           )}
 
-          {/* Mis pagos */}
           <Card>
             <CardHeader title="Mis Pagos Reportados" />
             <CardContent className="p-0">
@@ -399,7 +437,6 @@ export const ClientView = () => {
             </CardContent>
           </Card>
 
-          {/* Historial de consumo */}
           <Card>
             <CardHeader title="Historial de Consumo" />
             <CardContent className="p-0">
@@ -440,6 +477,10 @@ export const ClientView = () => {
           </Card>
         </div>
       </div>
+
+      <div className="max-w-4xl mx-auto mt-8 text-center">
+        <PrivacyNoticeLink />
+      </div>
     </div>
   );
-};
+}

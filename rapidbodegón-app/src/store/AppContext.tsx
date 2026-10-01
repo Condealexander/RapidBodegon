@@ -14,6 +14,7 @@ import {
   User as FirebaseAuthUser,
   UserCredential
 } from 'firebase/auth';
+import { listPastUnclosedCycles } from '../utils/cycle';
 
 interface RegisterResult {
   success: boolean;
@@ -36,6 +37,16 @@ interface ProductImportResult {
   created: number;
 }
 
+// Registro histórico de un ciclo de cobro ya cerrado (corte 3/10/17/25).
+export interface Cycle {
+  id: string;            // YYYY-MM-DD de la fecha de corte
+  periodStart: string;   // ISO
+  periodEnd: string;     // ISO
+  totalCollected: number;
+  totalConsumption: number;
+  closedAt: string;      // ISO
+}
+
 interface AppContextType {
   currentUser: User | null;
   authLoading: boolean;
@@ -43,6 +54,7 @@ interface AppContextType {
   products: Product[];
   transactions: Transaction[];
   config: AppConfig;
+  cycles: Cycle[];
   login: (name: string, pin: string) => Promise<RegisterResult>;
   register: (name: string, pin: string) => Promise<RegisterResult>;
   logout: () => Promise<void>;
@@ -60,9 +72,6 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-// Firebase Auth needs a real email format. Clients keep logging in with
-// "Nombre + PIN" in the UI; under the hood that maps to a synthetic email
-// (NOMBRE@rapidbodegon.local) + the PIN as the Auth password.
 const AUTH_DOMAIN_SUFFIX = 'rapidbodegon.local';
 
 const normalizeName = (name: string) =>
@@ -83,17 +92,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [products, setProducts] = useState<Product[]>(mockProducts);
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
   const [config, setConfig] = useState<AppConfig>(mockConfig);
+  const [cycles, setCycles] = useState<Cycle[]>([]);
 
-  // true mientras register() está creando la cuenta + el perfil. Evita que
-  // onAuthStateChanged deje currentUser en null porque el perfil de
-  // Firestore todavía no existe en ese instante.
   const registeringRef = useRef(false);
+  // Evita lanzar el cierre de ciclos más de una vez por sesión.
+  const cycleCloseAttemptedRef = useRef(false);
 
-  // NOTE: the ADMIN account is never created from client code. It's created
-  // (and its PIN rotated) with scripts/create-admin.mjs, which uses the
-  // Firebase Admin SDK server-side.
-
-  // Track the Firebase Auth session and hydrate the matching Firestore profile.
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser: FirebaseAuthUser | null) => {
       if (!fbUser) {
@@ -109,7 +113,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         } else if (!registeringRef.current) {
           setCurrentUser(null);
         }
-        // Si se está registrando, register() asigna currentUser al terminar.
       } catch (e) {
         console.warn('Error loading user profile:', e);
         if (!registeringRef.current) setCurrentUser(null);
@@ -139,11 +142,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         balanceUSD: 0
       };
       await setDoc(doc(db, 'users', cred.user.uid), newUser);
-      setCurrentUser(newUser); // entra directo a su cuenta, sin recargar
+      setCurrentUser(newUser);
       return { success: true };
     } catch (e: any) {
-      // Si se creó la cuenta de Auth pero falló el perfil, la borramos para
-      // no dejar un usuario "huérfano" que ya no podría volver a registrarse.
       if (cred) {
         try { await cred.user.delete(); } catch { /* nada más que hacer */ }
       }
@@ -159,9 +160,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Realtime Firestore listener for Users.
-  // ADMIN watches the whole directory (needed for the client list/reports).
-  // CLIENT watches only their own document.
+  // Users
   useEffect(() => {
     if (!authReady || !currentUser) return;
 
@@ -169,13 +168,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       const usersCol = collection(db, 'users');
       const unsub = onSnapshot(usersCol, (snapshot) => {
         const list: User[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ id: docSnap.id, ...docSnap.data() } as User);
-        });
+        snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as User));
         setUsers(list);
-      }, (error) => {
-        console.warn('Firestore users listener warning:', error);
-      });
+      }, (error) => console.warn('Firestore users listener warning:', error));
       return () => unsub();
     }
 
@@ -185,32 +180,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         setCurrentUser(updated);
         setUsers([updated]);
       }
-    }, (error) => {
-      console.warn('Firestore own-user listener warning:', error);
-    });
+    }, (error) => console.warn('Firestore own-user listener warning:', error));
     return () => unsub();
   }, [authReady, currentUser?.id, currentUser?.role]);
 
-  // Realtime Firestore listener for Products.
-  // Depende solo del id: si dependiera de todo currentUser, se volvería a
-  // suscribir (y a leer todos los productos) cada vez que cambia el saldo.
+  // Products
   useEffect(() => {
     if (!authReady || !currentUser) return;
     const productsCol = collection(db, 'products');
     const unsub = onSnapshot(productsCol, (snapshot) => {
       const list: Product[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as Product);
-      });
+      snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Product));
       setProducts(list);
-    }, (error) => {
-      console.warn('Firestore products listener warning:', error);
-    });
+    }, (error) => console.warn('Firestore products listener warning:', error));
     return () => unsub();
   }, [authReady, currentUser?.id]);
 
-  // Realtime Firestore listener for Transactions.
-  // ADMIN watches the most recent 1000; CLIENT only their own.
+  // Transactions
   useEffect(() => {
     if (!authReady || !currentUser) return;
 
@@ -221,33 +207,90 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     const unsub = onSnapshot(txQuery, (snapshot) => {
       const list: Transaction[] = [];
-      snapshot.forEach(docSnap => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as Transaction);
-      });
+      snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Transaction));
       list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       setTransactions(list);
-    }, (error) => {
-      console.warn('Firestore transactions listener warning:', error);
-    });
+    }, (error) => console.warn('Firestore transactions listener warning:', error));
     return () => unsub();
   }, [authReady, currentUser?.id, currentUser?.role]);
 
-  // Realtime Firestore listener for Config
+  // Config
   useEffect(() => {
     if (!authReady || !currentUser) return;
     const configDoc = doc(db, 'config', 'global');
     const unsub = onSnapshot(configDoc, (docSnap) => {
-      if (docSnap.exists()) {
-        setConfig(docSnap.data() as AppConfig);
-      }
-    }, (error) => {
-      console.warn('Firestore config listener warning:', error);
-    });
+      if (docSnap.exists()) setConfig(docSnap.data() as AppConfig);
+    }, (error) => console.warn('Firestore config listener warning:', error));
     return () => unsub();
   }, [authReady, currentUser?.id]);
 
-  // Keep currentUser in sync with the full users list — only relevant for
-  // ADMIN (a CLIENT gets this from their own-doc listener above).
+  // Cycles (solo el admin puede leerlos y cerrarlos — ver firestore.rules)
+  useEffect(() => {
+    if (!authReady || !currentUser || currentUser.role !== 'ADMIN') return;
+    const cyclesCol = collection(db, 'cycles');
+    const unsub = onSnapshot(
+      query(cyclesCol, orderBy('periodEnd', 'desc'), limit(24)),
+      (snapshot) => {
+        const list: Cycle[] = [];
+        snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Cycle));
+        setCycles(list);
+      },
+      (error) => console.warn('Firestore cycles listener warning:', error)
+    );
+    return () => unsub();
+  }, [authReady, currentUser?.id, currentUser?.role]);
+
+  // Cierre automático de ciclos vencidos: corre UNA vez por sesión de admin,
+  // una vez que ya sabemos qué ciclos están cerrados (cycles) y tenemos las
+  // transacciones cargadas para calcular los totales. No es instantáneo al
+  // llegar la fecha de corte (no hay backend corriendo solo) — se pone al
+  // día la primera vez que un admin abre el panel después del corte.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'ADMIN') return;
+    if (cycleCloseAttemptedRef.current) return;
+    // Espera a que el listener de transacciones haya entregado algo (evita
+    // cerrar ciclos con totales en $0 solo porque todavía no cargó nada).
+    if (transactions.length === 0 && users.length === 0) return;
+
+    cycleCloseAttemptedRef.current = true;
+
+    const closedIds = new Set(cycles.map(c => c.id));
+    const due = listPastUnclosedCycles(new Date(), closedIds);
+    if (due.length === 0) return;
+
+    (async () => {
+      for (const period of due) {
+        const totalCollected = transactions
+          .filter(t => t.type === 'PAYMENT' && t.status === 'COMPLETED')
+          .filter(t => {
+            const d = new Date(t.date).getTime();
+            return d >= period.start.getTime() && d < period.end.getTime();
+          })
+          .reduce((acc, t) => acc + t.amountUSD, 0);
+
+        const totalConsumption = transactions
+          .filter(t => t.type === 'CONSUMPTION' && t.status === 'COMPLETED')
+          .filter(t => {
+            const d = new Date(t.date).getTime();
+            return d >= period.start.getTime() && d < period.end.getTime();
+          })
+          .reduce((acc, t) => acc + t.amountUSD, 0);
+
+        try {
+          await setDoc(doc(db, 'cycles', period.id), {
+            periodStart: period.start.toISOString(),
+            periodEnd: period.end.toISOString(),
+            totalCollected,
+            totalConsumption,
+            closedAt: new Date().toISOString()
+          });
+        } catch (e) {
+          console.warn('No se pudo cerrar el ciclo', period.id, e);
+        }
+      }
+    })();
+  }, [currentUser?.id, currentUser?.role, cycles, transactions, users]);
+
   useEffect(() => {
     if (currentUser?.role === 'ADMIN') {
       const updated = users.find(u => u.id === currentUser.id);
@@ -260,8 +303,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       await signInWithEmailAndPassword(auth, emailForName(name), pin);
       return { success: true };
     } catch (e: any) {
-      // Mensaje genérico a propósito: no decimos si el usuario no existe o
-      // si el PIN está mal, para no facilitar enumeración de cuentas.
       if (e?.code === 'auth/too-many-requests') {
         return { success: false, error: 'Demasiados intentos fallidos. Intenta de nuevo en unos minutos.' };
       }
@@ -271,14 +312,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = async () => {
     await signOut(auth);
-    // Limpia datos en memoria para que no queden a la vista del siguiente
-    // usuario que inicie sesión en este mismo dispositivo.
     setUsers([]);
     setTransactions([]);
+    setCycles([]);
+    cycleCloseAttemptedRef.current = false;
   };
 
-  // Consumption logged by the ADMIN: atomic — check stock, decrement it,
-  // credit the balance and log the transaction in one Firestore transaction.
   const addConsumption = async (userId: string, productId: string, quantity: number): Promise<ConsumptionResult> => {
     const productRef = doc(db, 'products', productId);
     const userRef = doc(db, 'users', userId);
@@ -287,9 +326,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     try {
       await runTransaction(db, async (transaction) => {
         const productSnap = await transaction.get(productRef);
-        if (!productSnap.exists()) {
-          throw new Error('El producto ya no existe.');
-        }
+        if (!productSnap.exists()) throw new Error('El producto ya no existe.');
         const product = productSnap.data() as Product;
 
         if (product.stock < quantity) {
@@ -318,14 +355,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // El cliente reporta lo que tomó. NO descuenta stock ni cambia el saldo:
-  // queda PENDING hasta que el admin lo confirme.
   const requestConsumption = async (productId: string, quantity: number): Promise<RegisterResult> => {
     if (!currentUser) return { success: false, error: 'Debes iniciar sesión.' };
     if (!Number.isInteger(quantity) || quantity <= 0) {
       return { success: false, error: 'La cantidad debe ser un número entero mayor a cero.' };
     }
-
     const product = products.find(p => p.id === productId);
     if (!product) return { success: false, error: 'Ese producto ya no existe.' };
 
@@ -348,9 +382,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Confirma un consumo reportado por un cliente. Lee el estado real en
-  // Firestore dentro de la transacción (evita doble aprobación) y recalcula
-  // el monto con el precio REAL del producto, no el que escribió el cliente.
   const approveConsumption = async (transactionId: string): Promise<RegisterResult> => {
     const txRef = doc(db, 'transactions', transactionId);
     try {
@@ -361,23 +392,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         if (tx.type !== 'CONSUMPTION' || tx.status !== 'PENDING') {
           throw new Error('Esa solicitud ya no está pendiente.');
         }
-
         const qty = Number(tx.quantity);
         if (!tx.productId || !Number.isInteger(qty) || qty < 1) {
           throw new Error('Datos de la solicitud inválidos.');
         }
-
         const productRef = doc(db, 'products', tx.productId);
         const productSnap = await transaction.get(productRef);
         if (!productSnap.exists()) throw new Error('El producto ya no existe.');
         const product = productSnap.data() as Product;
-
         if (product.stock < qty) {
           throw new Error(`Stock insuficiente de "${product.name}" (disponible: ${product.stock}).`);
         }
-
         const amountUSD = Math.round(product.priceUSD * qty * 100) / 100;
-
         transaction.update(txRef, { status: 'COMPLETED', amountUSD });
         transaction.update(doc(db, 'users', tx.userId), { balanceUSD: increment(amountUSD) });
         transaction.update(productRef, { stock: increment(-qty) });
@@ -464,7 +490,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const updateExchangeRate = async (rate: number): Promise<RegisterResult> => {
     try {
-      // setDoc con merge: no falla si config/global todavía no existiera.
       await setDoc(doc(db, 'config', 'global'), { exchangeRate: rate }, { merge: true });
       return { success: true };
     } catch (e: any) {
@@ -472,7 +497,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Manual inventory adjustment (admin sets the stock to an exact value).
   const updateProductStock = async (productId: string, newStock: number): Promise<RegisterResult> => {
     try {
       await updateDoc(doc(db, 'products', productId), { stock: newStock });
@@ -482,9 +506,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Bulk import/update from an uploaded Excel/CSV file (parsed by the UI
-  // layer into simple rows). Matches existing products by name; creates a
-  // new product doc for any name that doesn't match yet.
   const importProducts = async (rows: ProductImportRow[]): Promise<ProductImportResult | { updated: 0; created: 0; error: string }> => {
     try {
       const batch = writeBatch(db);
@@ -529,6 +550,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     products,
     transactions,
     config,
+    cycles,
     login,
     register,
     logout,
@@ -559,6 +581,6 @@ export const useAppContext = () => {
   return context;
 };
 
-export const useApp = useAppContext; // alias de compatibilidad con los componentes existentes
+export const useApp = useAppContext;
 
 export default AppContext;

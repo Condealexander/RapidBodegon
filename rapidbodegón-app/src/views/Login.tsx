@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { Store, KeyRound, User as UserIcon, UserPlus, LogIn, Eye, EyeOff } from 'lucide-react';
-import { Card, CardContent, Input, Button, Label } from '../components/ui';
+import { Card, CardContent, Input, Button, Label } from '../components';
 
 export const Login = () => {
   const { login, register } = useApp();

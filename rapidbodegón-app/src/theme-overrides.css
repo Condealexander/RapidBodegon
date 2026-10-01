@@ -1,0 +1,68 @@
+/*
+ * Tema claro, sin tocar los componentes existentes.
+ * Por defecto la app sigue siendo oscura (data-theme="dark" o sin atributo).
+ * Cuando ThemeToggle pone data-theme="light" en <html>, estas reglas
+ * reescriben las clases de Tailwind que ya están en uso, con !important
+ * para ganarle a la especificidad de las utilities generadas.
+ */
+
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
+/* Fondos de pantalla completa */
+:root[data-theme='light'] .bg-slate-950 {
+  background-color: #f8fafc !important;
+}
+
+/* Tarjetas y contenedores */
+:root[data-theme='light'] .bg-slate-900,
+:root[data-theme='light'] .bg-slate-800 {
+  background-color: #ffffff !important;
+}
+:root[data-theme='light'] .bg-slate-800\/30,
+:root[data-theme='light'] .bg-slate-800\/50,
+:root[data-theme='light'] .hover\:bg-slate-800\/30:hover,
+:root[data-theme='light'] .hover\:bg-slate-800\/50:hover {
+  background-color: #f1f5f9 !important;
+}
+:root[data-theme='light'] .bg-slate-700,
+:root[data-theme='light'] .hover\:bg-slate-600:hover,
+:root[data-theme='light'] .hover\:bg-slate-700:hover {
+  background-color: #e2e8f0 !important;
+}
+
+/* Texto */
+:root[data-theme='light'] .text-white {
+  color: #0f172a !important;
+}
+:root[data-theme='light'] .text-slate-200,
+:root[data-theme='light'] .text-slate-300 {
+  color: #1e293b !important;
+}
+:root[data-theme='light'] .text-slate-400 {
+  color: #475569 !important;
+}
+:root[data-theme='light'] .text-slate-500 {
+  color: #64748b !important;
+}
+:root[data-theme='light'] .text-slate-600 {
+  color: #94a3b8 !important;
+}
+
+/* Bordes y separadores */
+:root[data-theme='light'] .border-slate-700,
+:root[data-theme='light'] .border-slate-700\/50,
+:root[data-theme='light'] .border-slate-800 {
+  border-color: #e2e8f0 !important;
+}
+:root[data-theme='light'] .divide-slate-700\/50 > :not([hidden]) ~ :not([hidden]),
+:root[data-theme='light'] .divide-slate-800 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+/* Inputs y selects (heredan de components/ui.tsx, casi siempre bg-slate-900) */
+:root[data-theme='light'] input,
+:root[data-theme='light'] select {
+  color-scheme: light;
+}

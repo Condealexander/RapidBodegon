@@ -77,6 +77,12 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+        // --- cycles (cierres de ciclo de cobro: cortes 3, 10, 17 y 25) ---
+    match /cycles/{cycleId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
     // Deny everything else by default (no more `allow read, write: if true`).
     match /{document=**} {
       allow read, write: if false;
