@@ -8,7 +8,7 @@
     "build": "vite build",
     "analyze": "ANALYZE=true vite build",
     "preview": "vite preview",
-    "create-admin": "node create-admin.mjs"
+    "create-admin": "node scripts/create-admin.mjs"
   },
   "dependencies": {
     "firebase": "^12.19.0",
