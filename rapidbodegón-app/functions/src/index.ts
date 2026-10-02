@@ -1,6 +1,5 @@
 import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
-import { defineSecret } from 'firebase-functions/params';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { setGlobalOptions } from 'firebase-functions/v2';
@@ -9,8 +8,6 @@ initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 
 const db = getFirestore();
-const callmebotApiKey = defineSecret('CALLMEBOT_API_KEY');
-const callmebotPhone = defineSecret('CALLMEBOT_PHONE');
 const DUPLICATE_REFERENCE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_IMPORT_ROWS = 400;
 
@@ -329,53 +326,8 @@ export const importProducts = onCall(async (request) => {
   return counts;
 });
 
-async function sendWhatsApp(message: string): Promise<void> {
-  const url = new URL('https://api.callmebot.com/whatsapp.php');
-  url.searchParams.set('phone', callmebotPhone.value());
-  url.searchParams.set('text', message);
-  url.searchParams.set('apikey', callmebotApiKey.value());
-  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) {
-    throw new Error(`CallMeBot devolvió HTTP ${response.status}.`);
-  }
-}
-
-async function sendOnce(eventId: string, message: string): Promise<void> {
-  const eventRef = db.doc(`functionEvents/${eventId}`);
-  const now = Date.now();
-  const leaseUntil = now + 60_000;
-  const claimed = await db.runTransaction(async (transaction) => {
-    const event = await transaction.get(eventRef);
-    if (event.get('status') === 'sent' || event.get('status') === 'skipped') return false;
-    const currentLease = event.get('leaseUntil');
-    if (typeof currentLease === 'number' && currentLease > now) {
-      throw new Error('La notificación de este evento ya está en curso.');
-    }
-    transaction.set(eventRef, { status: 'processing', leaseUntil });
-    return true;
-  });
-  if (!claimed) return;
-
-  if (process.env.FUNCTIONS_EMULATOR === 'true') {
-    await eventRef.set({ status: 'skipped', skippedAt: new Date().toISOString() }, { merge: true });
-    console.info('WhatsApp delivery skipped in the Firebase Emulator.');
-    return;
-  }
-
-  await sendWhatsApp(message);
-  await eventRef.set({ status: 'sent', sentAt: new Date().toISOString() }, { merge: true });
-}
-
-const transactionTriggerOptions = process.env.FUNCTIONS_EMULATOR === 'true'
-  ? { document: 'transactions/{transactionId}', retry: true }
-  : {
-      document: 'transactions/{transactionId}',
-      secrets: [callmebotApiKey, callmebotPhone],
-      retry: true,
-    };
-
-export const validateAndNotifyTransaction = onDocumentCreated(
-  transactionTriggerOptions,
+export const validateTransactionOnCreate = onDocumentCreated(
+  { document: 'transactions/{transactionId}', retry: true },
   async (event) => {
     const snapshot = event.data;
     if (!snapshot) return;
@@ -420,28 +372,5 @@ export const validateAndNotifyTransaction = onDocumentCreated(
       await snapshot.ref.update({ needsReview: true, reviewReasons });
     }
 
-    if (tx.type === 'PAYMENT' || tx.type === 'CONSUMPTION') {
-      const userSnapshot = typeof tx.userId === 'string'
-        ? await db.doc(`users/${tx.userId}`).get()
-        : null;
-      const clientName = userSnapshot?.get('name') ?? 'Cliente';
-      let message: string;
-      if (tx.type === 'PAYMENT') {
-        message = `💰 Pago reportado: ${clientName} reportó $${tx.amountUSD} (Ref: ${tx.reference ?? 'sin referencia'}). Pendiente de validar.`;
-      } else {
-        const product = typeof tx.productId === 'string'
-          ? await db.doc(`products/${tx.productId}`).get()
-          : null;
-        const productName = product?.get('name') ?? 'Producto';
-        if (tx.status === 'COMPLETED') {
-          const userBalance = userSnapshot?.get('balanceUSD');
-          const balanceText = typeof userBalance === 'number' ? `$${userBalance}` : 'no disponible';
-          message = `🧾 Nuevo consumo: ${clientName} cargó ${productName} x${tx.quantity ?? 0} = $${tx.amountUSD}. Saldo actualizado: ${balanceText}.`;
-        } else {
-          message = `🧾 Consumo reportado: ${clientName} solicitó ${productName} x${tx.quantity ?? 0} = $${tx.amountUSD}. Pendiente de confirmar.`;
-        }
-      }
-      await sendOnce(event.id, message);
-    }
   }
 );

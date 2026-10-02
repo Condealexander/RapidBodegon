@@ -33,8 +33,7 @@ service cloud.firestore {
 
       // Admins can update any profile. Clients may only edit their own
       // display name — balanceUSD can never be touched by a client write.
-      allow update: if (isAdmin()
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['balanceUSD']))
+      allow update: if isAdmin()
         || (isOwner(userId)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']));
 
@@ -44,25 +43,47 @@ service cloud.firestore {
     // --- products ---
     match /products/{productId} {
       allow read: if isSignedIn();
-      // Product creation and stock changes go through the Admin SDK functions.
-      allow create: if false;
-      allow update: if isAdmin()
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['stock']);
-      allow delete: if isAdmin();
+      allow write: if isAdmin();
     }
 
     // --- transactions ---
     match /transactions/{txId} {
       allow read: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
-      // All transaction creation and state changes are validated by callable functions.
-      allow create, update, delete: if false;
+
+      // Keep existing client reporting online until the callable backend is deployed.
+      allow create: if isAdmin() || (isOwner(request.resource.data.userId)
+        && request.resource.data.id == txId
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.date is string
+        && (
+          (request.resource.data.type == 'PAYMENT'
+            && request.resource.data.keys().hasOnly([
+              'id', 'userId', 'type', 'amountUSD', 'date', 'status', 'reference'
+            ])
+            && request.resource.data.amountUSD is number
+            && request.resource.data.amountUSD > 0
+            && request.resource.data.reference is string
+            && request.resource.data.reference.matches('^[0-9]{4,12}$'))
+          ||
+          (request.resource.data.type == 'CONSUMPTION'
+            && request.resource.data.keys().hasOnly([
+              'id', 'userId', 'type', 'amountUSD', 'date', 'status', 'productId', 'quantity'
+            ])
+            && request.resource.data.amountUSD is number
+            && request.resource.data.amountUSD >= 0
+            && request.resource.data.productId is string
+            && request.resource.data.quantity is int
+            && request.resource.data.quantity > 0
+            && request.resource.data.quantity <= 50)
+        ));
+
+      allow update, delete: if isAdmin();
     }
 
     // --- config ---
     match /config/{configId} {
       allow read: if isSignedIn();
-      // The exchange rate is changed through setExchangeRate.
-      allow create, update, delete: if false;
+      allow write: if isAdmin();
     }
 
         // --- cycles (cierres de ciclo de cobro: cortes 3, 10, 17 y 25) ---

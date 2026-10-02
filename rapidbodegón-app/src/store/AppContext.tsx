@@ -1,12 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { User, Product, Transaction, AppConfig } from '../types';
 import { mockProducts, mockConfig, mockTransactions } from '../data/mock';
-import { db, auth, functions } from '../firebase';
+import { db, auth } from '../firebase';
 import {
-  collection, doc, onSnapshot, setDoc, getDoc,
-  runTransaction, query, where, orderBy, limit
+  collection, doc, onSnapshot, setDoc, updateDoc, increment, getDoc,
+  runTransaction, writeBatch, query, where, orderBy, limit
 } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
 import {
   onAuthStateChanged,
   createUserWithEmailAndPassword,
@@ -80,22 +79,6 @@ const normalizeName = (name: string) =>
 
 const emailForName = (name: string) =>
   `${normalizeName(name).replace(/[^A-Z0-9]/g, '')}@${AUTH_DOMAIN_SUFFIX}`;
-
-async function invokeMutation<TData extends object>(
-  name: string,
-  data: TData,
-  fallback: string
-): Promise<RegisterResult> {
-  try {
-    const callable = httpsCallable<TData, RegisterResult>(functions, name);
-    return (await callable(data)).data;
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : fallback,
-    };
-  }
-}
 
 export const AppProvider = ({ children }: { children: ReactNode }) => {
 
@@ -354,43 +337,229 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     cycleCloseAttemptedRef.current = false;
   };
 
-  const addConsumption = (userId: string, productId: string, quantity: number): Promise<ConsumptionResult> =>
-    invokeMutation('addConsumption', { userId, productId, quantity }, 'No se pudo registrar el consumo.');
+  const addConsumption = async (userId: string, productId: string, quantity: number): Promise<ConsumptionResult> => {
+    const productRef = doc(db, 'products', productId);
+    const userRef = doc(db, 'users', userId);
+    const txRef = doc(collection(db, 'transactions'));
 
-  const requestConsumption = (productId: string, quantity: number): Promise<RegisterResult> =>
-    invokeMutation('requestConsumption', { productId, quantity }, 'No se pudo reportar el consumo. Intenta de nuevo.');
+    try {
+      await runTransaction(db, async (transaction) => {
+        const productSnap = await transaction.get(productRef);
+        if (!productSnap.exists()) throw new Error('El producto ya no existe.');
+        const product = productSnap.data() as Product;
 
-  const approveConsumption = (transactionId: string): Promise<RegisterResult> =>
-    invokeMutation('confirmConsumption', { transactionId }, 'No se pudo confirmar el consumo.');
+        if (product.stock < quantity) {
+          throw new Error(`Stock insuficiente de "${product.name}" (disponible: ${product.stock}).`);
+        }
 
-  const rejectConsumption = (transactionId: string): Promise<RegisterResult> =>
-    invokeMutation('rejectConsumption', { transactionId }, 'No se pudo rechazar la solicitud.');
+        const amountUSD = product.priceUSD * quantity;
+        const newTx: Transaction = {
+          id: txRef.id,
+          userId,
+          type: 'CONSUMPTION',
+          amountUSD,
+          date: new Date().toISOString(),
+          status: 'COMPLETED',
+          productId,
+          quantity
+        };
 
-  const reportPayment = (_userId: string, amountUSD: number, reference: string): Promise<RegisterResult> =>
-    invokeMutation('reportPayment', { amountUSD, reference }, 'No se pudo reportar el pago. Intenta de nuevo.');
+        transaction.set(txRef, newTx);
+        transaction.update(userRef, { balanceUSD: increment(amountUSD) });
+        transaction.update(productRef, { stock: increment(-quantity) });
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'No se pudo registrar el consumo.' };
+    }
+  };
 
-  const approvePayment = (transactionId: string): Promise<RegisterResult> =>
-    invokeMutation('confirmPayment', { transactionId }, 'No se pudo aprobar el pago. Intenta de nuevo.');
+  const requestConsumption = async (productId: string, quantity: number): Promise<RegisterResult> => {
+    if (!currentUser) return { success: false, error: 'Debes iniciar sesión.' };
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return { success: false, error: 'La cantidad debe ser un número entero mayor a cero.' };
+    }
+    const product = products.find(p => p.id === productId);
+    if (!product) return { success: false, error: 'Ese producto ya no existe.' };
 
-  const rejectPayment = (transactionId: string): Promise<RegisterResult> =>
-    invokeMutation('rejectPayment', { transactionId }, 'No se pudo rechazar el pago. Intenta de nuevo.');
+    try {
+      const txRef = doc(collection(db, 'transactions'));
+      const newTx: Transaction = {
+        id: txRef.id,
+        userId: currentUser.id,
+        type: 'CONSUMPTION',
+        amountUSD: Math.round(product.priceUSD * quantity * 100) / 100,
+        date: new Date().toISOString(),
+        status: 'PENDING',
+        productId,
+        quantity
+      };
+      await setDoc(txRef, newTx);
+      return { success: true };
+    } catch {
+      return { success: false, error: 'No se pudo reportar el consumo. Intenta de nuevo.' };
+    }
+  };
 
-  const updateExchangeRate = (rate: number): Promise<RegisterResult> =>
-    invokeMutation('setExchangeRate', { rate }, 'No se pudo actualizar la tasa de cambio.');
+  const approveConsumption = async (transactionId: string): Promise<RegisterResult> => {
+    const txRef = doc(db, 'transactions', transactionId);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const txSnap = await transaction.get(txRef);
+        if (!txSnap.exists()) throw new Error('La solicitud ya no existe.');
+        const tx = txSnap.data() as Transaction;
+        if (tx.type !== 'CONSUMPTION' || tx.status !== 'PENDING') {
+          throw new Error('Esa solicitud ya no está pendiente.');
+        }
+        const qty = Number(tx.quantity);
+        if (!tx.productId || !Number.isInteger(qty) || qty < 1) {
+          throw new Error('Datos de la solicitud inválidos.');
+        }
+        const productRef = doc(db, 'products', tx.productId);
+        const productSnap = await transaction.get(productRef);
+        if (!productSnap.exists()) throw new Error('El producto ya no existe.');
+        const product = productSnap.data() as Product;
+        if (product.stock < qty) {
+          throw new Error(`Stock insuficiente de "${product.name}" (disponible: ${product.stock}).`);
+        }
+        const amountUSD = Math.round(product.priceUSD * qty * 100) / 100;
+        transaction.update(txRef, { status: 'COMPLETED', amountUSD });
+        transaction.update(doc(db, 'users', tx.userId), { balanceUSD: increment(amountUSD) });
+        transaction.update(productRef, { stock: increment(-qty) });
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'No se pudo confirmar el consumo.' };
+    }
+  };
 
-  const updateProductStock = (productId: string, stock: number): Promise<RegisterResult> =>
-    invokeMutation('updateProductStock', { productId, stock }, 'No se pudo actualizar el stock. ¿El producto existe en Firestore?');
+  const rejectConsumption = async (transactionId: string): Promise<RegisterResult> => {
+    const txRef = doc(db, 'transactions', transactionId);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const txSnap = await transaction.get(txRef);
+        if (!txSnap.exists()) throw new Error('La solicitud ya no existe.');
+        const tx = txSnap.data() as Transaction;
+        if (tx.type !== 'CONSUMPTION' || tx.status !== 'PENDING') {
+          throw new Error('Esa solicitud ya no está pendiente.');
+        }
+        transaction.update(txRef, { status: 'REJECTED' });
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'No se pudo rechazar la solicitud.' };
+    }
+  };
+
+  const reportPayment = async (userId: string, amountUSD: number, reference: string): Promise<RegisterResult> => {
+    try {
+      const txRef = doc(collection(db, 'transactions'));
+      const newTx: Transaction = {
+        id: txRef.id,
+        userId,
+        type: 'PAYMENT',
+        amountUSD,
+        date: new Date().toISOString(),
+        status: 'PENDING',
+        reference
+      };
+      await setDoc(txRef, newTx);
+      return { success: true };
+    } catch {
+      return { success: false, error: 'No se pudo reportar el pago. Intenta de nuevo.' };
+    }
+  };
+
+  const approvePayment = async (transactionId: string): Promise<RegisterResult> => {
+    const txRef = doc(db, 'transactions', transactionId);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const txSnap = await transaction.get(txRef);
+        if (!txSnap.exists()) throw new Error('La transacción ya no existe.');
+        const tx = txSnap.data() as Transaction;
+        if (tx.type !== 'PAYMENT' || tx.status !== 'PENDING') {
+          throw new Error('Ese pago ya fue procesado.');
+        }
+        transaction.update(txRef, { status: 'COMPLETED' });
+        transaction.update(doc(db, 'users', tx.userId), { balanceUSD: increment(-tx.amountUSD) });
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'No se pudo aprobar el pago. Intenta de nuevo.' };
+    }
+  };
+
+  const rejectPayment = async (transactionId: string): Promise<RegisterResult> => {
+    const txRef = doc(db, 'transactions', transactionId);
+    try {
+      await runTransaction(db, async (transaction) => {
+        const txSnap = await transaction.get(txRef);
+        if (!txSnap.exists()) throw new Error('La transacción ya no existe.');
+        const tx = txSnap.data() as Transaction;
+        if (tx.type !== 'PAYMENT' || tx.status !== 'PENDING') {
+          throw new Error('Ese pago ya fue procesado.');
+        }
+        transaction.update(txRef, { status: 'REJECTED' });
+      });
+      return { success: true };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'No se pudo rechazar el pago. Intenta de nuevo.' };
+    }
+  };
+
+  const updateExchangeRate = async (rate: number): Promise<RegisterResult> => {
+    try {
+      await setDoc(doc(db, 'config', 'global'), { exchangeRate: rate }, { merge: true });
+      return { success: true };
+    } catch {
+      return { success: false, error: 'No se pudo actualizar la tasa de cambio.' };
+    }
+  };
+
+  const updateProductStock = async (productId: string, newStock: number): Promise<RegisterResult> => {
+    try {
+      await updateDoc(doc(db, 'products', productId), { stock: newStock });
+      return { success: true };
+    } catch {
+      return { success: false, error: 'No se pudo actualizar el stock. ¿El producto existe en Firestore?' };
+    }
+  };
 
   const importProducts = async (rows: ProductImportRow[]): Promise<ProductImportResult | { updated: 0; created: 0; error: string }> => {
     try {
-      const callable = httpsCallable<{ rows: ProductImportRow[] }, ProductImportResult>(functions, 'importProducts');
-      return (await callable({ rows })).data;
-    } catch (error) {
-      return {
-        updated: 0,
-        created: 0,
-        error: error instanceof Error ? error.message : 'No se pudo importar el archivo. Verifica el formato.',
-      };
+      const batch = writeBatch(db);
+      let updated = 0;
+      let created = 0;
+
+      rows.forEach(row => {
+        const cleanName = row.name.trim().toUpperCase();
+        const existing = products.find(p => p.name.toUpperCase() === cleanName);
+
+        if (existing) {
+          const patch: Partial<Product> = { stock: row.stock };
+          if (row.priceUSD !== undefined && !isNaN(row.priceUSD)) {
+            patch.priceUSD = row.priceUSD;
+          }
+          batch.update(doc(db, 'products', existing.id), patch);
+          updated++;
+        } else {
+          const newId = row.name.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || `prod-${Date.now()}-${created}`;
+          const newProduct: Product = {
+            id: newId,
+            name: cleanName,
+            priceUSD: row.priceUSD !== undefined && !isNaN(row.priceUSD) ? row.priceUSD : 0,
+            stock: row.stock
+          };
+          batch.set(doc(db, 'products', newId), newProduct);
+          created++;
+        }
+      });
+
+      await batch.commit();
+      return { updated, created };
+    } catch {
+      return { updated: 0, created: 0, error: 'No se pudo importar el archivo. Verifica el formato.' };
     }
   };
 
