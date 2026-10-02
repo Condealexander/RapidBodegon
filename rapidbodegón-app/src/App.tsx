@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { Suspense, lazy } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { AppProvider, useApp } from './store/AppContext';
 import { Login } from './views/Login';
 import { ClientView } from './views/ClientView';
@@ -27,8 +27,43 @@ const LoadingScreen = ({ text }: { text: string }) => (
   </div>
 );
 
+const OfflineNotice = () => (
+  <div
+    role="status"
+    style={{
+      position: 'sticky',
+      top: 0,
+      zIndex: 40,
+      width: '100%',
+      background: '#f59e0b',
+      color: '#111827',
+      textAlign: 'center',
+      fontWeight: 700,
+      fontSize: 13,
+      padding: '10px 14px',
+      letterSpacing: '0.02em',
+    }}
+  >
+    Sin conexión — último saldo conocido
+  </div>
+);
+
 const MainApp = () => {
   const { currentUser, authLoading } = useApp();
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Mientras Firebase restaura la sesión guardada, no mostramos el Login
   // (evita el destello de "Ingresar al Sistema" al recargar estando logueado).
@@ -36,19 +71,28 @@ const MainApp = () => {
     return <LoadingScreen text="Cargando..." />;
   }
 
-  if (!currentUser) {
-    return <Login />;
-  }
+  const renderContent = () => {
+    if (!currentUser) {
+      return <Login />;
+    }
 
-  if (currentUser.role === 'ADMIN') {
-    return (
-      <Suspense fallback={<LoadingScreen text="Cargando panel de administración..." />}>
-        <AdminView />
-      </Suspense>
-    );
-  }
+    if (currentUser.role === 'ADMIN') {
+      return (
+        <Suspense fallback={<LoadingScreen text="Cargando panel de administración..." />}>
+          <AdminView />
+        </Suspense>
+      );
+    }
 
-  return <ClientView />;
+    return <ClientView />;
+  };
+
+  return (
+    <>
+      {isOffline && <OfflineNotice />}
+      {renderContent()}
+    </>
+  );
 };
 
 export default function App() {

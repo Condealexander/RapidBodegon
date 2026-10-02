@@ -8,9 +8,14 @@
     "build": "vite build",
     "analyze": "ANALYZE=true vite build",
     "preview": "vite preview",
-    "create-admin": "node scripts/create-admin.mjs"
+    "create-admin": "node scripts/create-admin.mjs",
+    "cap:sync": "npm run build && npx cap sync"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
     "firebase": "^12.19.0",
     "firebase-admin": "^14.4.0",
     "lucide-react": "^0.525.0",
@@ -27,6 +32,7 @@
     "rollup-plugin-visualizer": "^7.1.1",
     "tailwindcss": "^4.1.11",
     "typescript": "^5.7.3",
-    "vite": "^6.3.0"
+    "vite": "^6.3.0",
+    "vite-plugin-pwa": "^1.3.0"
   }
 }
