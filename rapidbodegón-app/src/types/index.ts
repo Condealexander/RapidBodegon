@@ -35,6 +35,8 @@ export interface Transaction {
   // Specific to PAYMENT
   reference?: string;
   bank?: string;
+  needsReview?: boolean;
+  reviewReasons?: string[];
 }
 
 export interface AppConfig {
@@ -47,4 +49,3 @@ export interface AppConfig {
     phone: string;
   };
 }
-

@@ -49,6 +49,9 @@
 :root[data-theme='light'] .text-slate-600 {
   color: #94a3b8 !important;
 }
+:root[data-theme='light'] .text-amber-400 {
+  color: #92400e !important;
+}
 
 /* Bordes y separadores */
 :root[data-theme='light'] .border-slate-700,

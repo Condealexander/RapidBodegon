@@ -385,6 +385,11 @@ export const AdminView = () => {
                             {product && product.stock < qty && (
                               <span className="text-red-400 text-xs">stock insuficiente ({product.stock})</span>
                             )}
+                            {tx.needsReview && (
+                              <span className="inline-flex items-center gap-1 text-amber-400 text-xs" role="status">
+                                <AlertCircle size={13} /> Revisar
+                              </span>
+                            )}
                             <span className="text-slate-500 text-xs flex items-center">
                               <Clock size={12} className="mr-1" />
                               {new Date(tx.date).toLocaleDateString()}
@@ -434,6 +439,11 @@ export const AdminView = () => {
                           <div className="flex gap-3 text-sm mt-1">
                             <span className="text-yellow-400 font-medium">{formatCurrency(tx.amountUSD)}</span>
                             <span className="text-slate-400">Ref: {tx.reference}</span>
+                            {tx.needsReview && (
+                              <span className="inline-flex items-center gap-1 text-amber-400 text-xs" role="status">
+                                <AlertCircle size={13} /> Revisar
+                              </span>
+                            )}
                             <span className="text-slate-500 text-xs flex items-center">
                               <Clock size={12} className="mr-1" />
                               {new Date(tx.date).toLocaleDateString()}
