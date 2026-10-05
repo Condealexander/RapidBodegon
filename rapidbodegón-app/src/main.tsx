@@ -1,3 +1,4 @@
+/// <reference types="vite-plugin-pwa/client" />
 import { StrictMode } from 'react';
 import './theme-overrides.css';
 import { createRoot } from 'react-dom/client';
