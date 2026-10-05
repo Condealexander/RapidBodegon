@@ -27,7 +27,7 @@ export const AdminView = () => {
     users, products, transactions, config, cycles, logout,
     addConsumption, updateExchangeRate, approvePayment, rejectPayment,
     approveConsumption, rejectConsumption,
-    updateProductStock, importProducts
+    updateProductStocks, importProducts
   } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -141,23 +141,54 @@ export const AdminView = () => {
   };
 
   const handleStockInputChange = (productId: string, value: string) => {
-    setStockEdits(prev => ({ ...prev, [productId]: value }));
-  };
+    const product = products.find(p => p.id === productId);
+    const parsedValue = value.trim() === '' ? NaN : Number(value);
+    const isUnchanged = product
+      && Number.isSafeInteger(parsedValue)
+      && parsedValue >= 0
+      && parsedValue === product.stock;
 
-  const handleSaveStock = async (productId: string) => {
-    const raw = stockEdits[productId];
-    const newStock = parseInt(raw, 10);
-    if (isNaN(newStock) || newStock < 0) return;
-    setActionError('');
-    const result = await updateProductStock(productId, newStock);
-    if (!result.success) {
-      setActionError(result.error || 'No se pudo actualizar el stock.');
-      return;
-    }
     setStockEdits(prev => {
       const next = { ...prev };
-      delete next[productId];
+      if (isUnchanged) {
+        delete next[productId];
+      } else {
+        next[productId] = value;
+      }
       return next;
+    });
+  };
+
+  const handleSaveStock = async () => {
+    const changes: Array<{ productId: string; stock: number }> = [];
+    for (const [productId, rawStock] of Object.entries(stockEdits)) {
+      const product = products.find(p => p.id === productId);
+      if (!product) {
+        setActionError('No se encontró uno de los productos editados. Actualiza la página e intenta de nuevo.');
+        return;
+      }
+
+      const stock = rawStock.trim() === '' ? NaN : Number(rawStock);
+      if (!Number.isSafeInteger(stock) || stock < 0) {
+        setActionError(`El stock de ${product.name} debe ser un número entero no negativo.`);
+        return;
+      }
+      changes.push({ productId, stock });
+    }
+
+    if (changes.length === 0) return;
+    if (changes.length > 500) {
+      setActionError('No se pueden guardar más de 500 cambios de stock a la vez.');
+      return;
+    }
+
+    setActionError('');
+    await runAction('stock-bulk', async () => {
+      const result = await updateProductStocks(changes);
+      if (result.success) {
+        setStockEdits({});
+      }
+      return result;
     });
   };
 
@@ -546,19 +577,30 @@ export const AdminView = () => {
           <Card className="border-purple-500/20">
             <CardHeader
               title="Inventario"
-              subtitle="Ajusta el stock manualmente o impórtalo desde Excel/CSV"
+              subtitle="Ajusta varios stocks y guárdalos juntos o impórtalos desde Excel/CSV"
               action={
-                <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium cursor-pointer transition-colors">
-                  <Upload size={14} />
-                  {importing ? 'Importando...' : 'Importar Excel'}
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    className="hidden"
-                    onChange={handleImportExcel}
-                    disabled={importing}
-                  />
-                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="primary"
+                    className="px-3 py-1.5 text-xs"
+                    disabled={Object.keys(stockEdits).length === 0 || busyId !== null || importing}
+                    onClick={handleSaveStock}
+                  >
+                    <Save size={14} className="mr-1" />
+                    {busyId === 'stock-bulk' ? 'Guardando...' : `Guardar cambios (${Object.keys(stockEdits).length})`}
+                  </Button>
+                  <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium cursor-pointer transition-colors">
+                    <Upload size={14} />
+                    {importing ? 'Importando...' : 'Importar Excel'}
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      className="hidden"
+                      onChange={handleImportExcel}
+                      disabled={importing || busyId !== null}
+                    />
+                  </label>
+                </div>
               }
             />
             <CardContent>
@@ -578,7 +620,6 @@ export const AdminView = () => {
                       <th className="p-3">Producto</th>
                       <th className="p-3 text-right">Precio</th>
                       <th className="p-3 text-right">Stock</th>
-                      <th className="p-3 text-center">Acciones</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-700/50">
@@ -602,21 +643,12 @@ export const AdminView = () => {
                                 className="w-20 py-1 px-2 text-right"
                                 value={editValue !== undefined ? editValue : product.stock}
                                 onChange={(e) => handleStockInputChange(product.id, e.target.value)}
+                                disabled={busyId !== null || importing}
                               />
                               {isLow && editValue === undefined && (
                                 <span className="text-xs text-red-400">bajo</span>
                               )}
                             </div>
-                          </td>
-                          <td className="p-3 text-center">
-                            <Button
-                              variant="secondary"
-                              className="px-2 py-1 text-xs h-auto"
-                              disabled={editValue === undefined}
-                              onClick={() => handleSaveStock(product.id)}
-                            >
-                              <Save size={14} className="mr-1" /> Guardar
-                            </Button>
                           </td>
                         </tr>
                       );

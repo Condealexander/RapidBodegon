@@ -66,7 +66,7 @@ interface AppContextType {
   approvePayment: (transactionId: string) => Promise<RegisterResult>;
   rejectPayment: (transactionId: string) => Promise<RegisterResult>;
   updateExchangeRate: (rate: number) => Promise<RegisterResult>;
-  updateProductStock: (productId: string, newStock: number) => Promise<RegisterResult>;
+  updateProductStocks: (stocks: Array<{ productId: string; stock: number }>) => Promise<RegisterResult>;
   importProducts: (rows: ProductImportRow[]) => Promise<ProductImportResult | { updated: 0; created: 0; error: string }>;
 }
 
@@ -516,12 +516,29 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const updateProductStock = async (productId: string, newStock: number): Promise<RegisterResult> => {
+  const updateProductStocks = async (stocks: Array<{ productId: string; stock: number }>): Promise<RegisterResult> => {
+    if (stocks.length === 0) {
+      return { success: false, error: 'No hay cambios de stock para guardar.' };
+    }
+    if (stocks.length > 500) {
+      return { success: false, error: 'No se pueden guardar más de 500 cambios de stock a la vez.' };
+    }
+    if (stocks.some(({ productId, stock }) =>
+      !productId || !Number.isSafeInteger(stock) || stock < 0
+    )) {
+      return { success: false, error: 'Cada stock debe ser un número entero no negativo.' };
+    }
+
     try {
-      await updateDoc(doc(db, 'products', productId), { stock: newStock });
+      const batch = writeBatch(db);
+      stocks.forEach(({ productId, stock }) => {
+        batch.update(doc(db, 'products', productId), { stock });
+      });
+      await batch.commit();
       return { success: true };
-    } catch {
-      return { success: false, error: 'No se pudo actualizar el stock. ¿El producto existe en Firestore?' };
+    } catch (error) {
+      console.error('Error saving product stock batch:', error);
+      return { success: false, error: 'No se pudieron guardar los cambios de stock. Verifica la conexión, los permisos y que los productos existan.' };
     }
   };
 
@@ -582,7 +599,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     approvePayment,
     rejectPayment,
     updateExchangeRate,
-    updateProductStock,
+    updateProductStocks,
     importProducts
   };
 

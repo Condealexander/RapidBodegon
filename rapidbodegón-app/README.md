@@ -66,8 +66,9 @@ desactivado con `ENABLE_CONSUMPTION_REPORT = false` en `src/views/ClientView.tsx
 - Registra consumos a crédito. La operación actualiza transacción, saldo del
   cliente y stock mediante una transacción de Firestore.
 - Aprueba o rechaza pagos y solicitudes de consumo pendientes.
-- Ajusta stock manualmente o importa `.xlsx`, `.xls` y `.csv` con columnas
-  `PRODUCTO` y `STOCK`, y una columna opcional `PRECIO`.
+- Ajusta varios stocks manualmente y guarda los cambios juntos con un solo
+  botón, o importa `.xlsx`, `.xls` y `.csv` con columnas `PRODUCTO` y `STOCK`,
+  y una columna opcional `PRECIO`.
 - Actualiza la tasa de cambio, revisa histórico de ciclos y cierra períodos de
   cobro.
 - Puede cambiar el tema visual y operar desde la misma experiencia web o la
