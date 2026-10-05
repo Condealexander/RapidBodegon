@@ -1,75 +1,133 @@
 # RapidBodegón
-Sistema interno de gestión de crédito, pagos, inventario y cobranza. Los
-clientes consultan su cuenta y reportan pagos; el administrador gestiona
-consumos, conciliación, productos, tasa de cambio y cierres de ciclo.
 
-**Aplicación:** https://rapid-bodegon-alexyanez1993-5085.vercel.app
+Sistema interno de gestión de crédito, pagos, inventario y cobranza para
+clientes y administradores. La aplicación permite consultar saldos, registrar
+pagos, aprobar consumos, revisar ciclos de cobro, gestionar stock y operar
+desde navegador o como app instalable en dispositivos.
+
+**Aplicación web:** https://rapid-bodegon-alexyanez1993-5085.vercel.app
+
+## Estado actual de la app
+
+La solución ya incluye varias mejoras y preparativos de producto que no estaban
+en la versión inicial:
+
+- PWA instalable con soporte offline y actualización automática.
+- Empaquetado nativo para Android e iOS con Capacitor.
+- Separación de bundles para optimizar carga inicial (Firebase, Recharts, XLSX).
+- Preparación de Cloud Functions (Node 22) para backend server-side, sin
+  conectarlas aún al cliente ni desplegarlas en producción.
+- Soporte para temas claro/oscuro, importación de inventario y cierre de ciclos.
+- Scripts de administración con Firebase Admin SDK para crear usuarios y
+  mantener datos sensibles fuera del navegador.
 
 ## Stack
 
-- React 19 y TypeScript, compilados con Vite 6.
-- Tailwind CSS 4.
-- Firebase Authentication y Cloud Firestore; no hay servidor propio.
-- Recharts para los gráficos administrativos.
-- SheetJS (`xlsx`) para importar inventario.
-- Vercel para hosting; `main` está configurada como rama de producción.
+- React 19 + TypeScript + Vite 6.
+- Tailwind CSS 4 para la interfaz.
+- Firebase Authentication + Cloud Firestore.
+- Recharts para dashboards y métricas administrativas.
+- SheetJS (`xlsx`) para importación de inventario desde Excel/CSV.
+- Vite PWA + Capacitor para app instalable y packaging nativo.
+- Vercel para hosting de la web app.
 
-La lógica compartida de negocio está principalmente en
-`src/store/AppContext.tsx`. Las vistas viven en `src/views/`, los componentes
-comunes en `src/components/`, los tipos en `src/types/` y la autorización de
-Firestore en `firestore.rules`.
+La lógica de negocio central vive en `src/store/AppContext.tsx`; las vistas en
+`src/views/`, los componentes reutilizables en `src/components/`, los tipos en
+`src/types/` y la autorización en `firestore.rules`.
 
-## Acceso y roles
-
-El usuario inicia sesión con nombre y PIN; no necesita un correo real. La app
-normaliza el nombre y deriva un correo sintético para Firebase Authentication.
-Por ejemplo, `JUAN PEREZ` se convierte en `JUANPEREZ@rapidbodegon.local`. El
-registro de clientes requiere un PIN de al menos 8 caracteres. Las cuentas
-`ADMIN` se crean o actualizan mediante un script con Firebase Admin SDK, nunca
-desde el código cliente.
+## Flujo principal
 
 ### Cliente
 
-- Consulta el saldo pendiente en USD y su conversión a bolívares según la tasa
-  configurada; ve el estado de cuenta y el próximo corte.
-- Consulta los datos de pago móvil/transferencia, copia campos individuales o
-  copia todos los datos bancarios juntos.
-- Reporta pagos con monto y referencia bancaria. Los reportes quedan pendientes
-  hasta que el administrador los valide.
-- Consulta el historial de pagos y consumos, y recibe un onboarding inicial y
-  un aviso de privacidad.
-- Ve los precios de productos disponibles; los productos con stock menor o
-  igual a cero no aparecen.
-- Puede cambiar entre tema claro y oscuro.
+- Inicia sesión con nombre y PIN; la app normaliza el nombre y genera un correo
+  sintético para Firebase Authentication. Ejemplo: `JUAN PEREZ` →
+  `JUANPEREZ@rapidbodegon.local`.
+- Consulta saldo pendiente en USD, su conversión a bolívares según la tasa
+  global y el estado de cuenta.
+- Revisa el próximo corte y los movimientos de su cuenta.
+- Consulta datos bancarios de pago móvil/transferencia, con copia individual o
+  copia masiva de todos los campos relevantes.
+- Reporta pagos con monto y referencia; esos reportes quedan `PENDING` hasta
+  su aprobación por parte del administrador.
+- Consulta historial de pagos y consumos, y recibe onboarding y aviso de
+  privacidad.
+- Visualiza precios y productos disponibles, ocultando items sin stock.
+- Puede alternar entre tema claro y oscuro.
+- La app se comporta como PWA y puede instalarse en el escritorio o móvil.
 
-El flujo para que el cliente reporte su propio consumo existe en el código,
-pero está desactivado por `ENABLE_CONSUMPTION_REPORT = false` en
-`src/views/ClientView.tsx`.
+El flujo para reportar consumo propio existe en código, pero hoy está
+desactivado con `ENABLE_CONSUMPTION_REPORT = false` en `src/views/ClientView.tsx`.
 
 ### Administrador
 
-- Consulta el crédito global por cobrar, la recaudación del ciclo actual y el
-  estado de clientes; puede buscar clientes por nombre.
-- Revisa gráficos de ventas diarias y los cinco clientes con mayor consumo.
+- Revisa el crédito global por cobrar, la recaudación del ciclo actual y el
+  estado de clientes.
+- Busca clientes por nombre y revisa gráficos de ventas diarias.
 - Registra consumos a crédito. La operación actualiza transacción, saldo del
   cliente y stock mediante una transacción de Firestore.
 - Aprueba o rechaza pagos y solicitudes de consumo pendientes.
-- Ajusta stock manualmente o importa `.xlsx`, `.xls` y `.csv` con las columnas
+- Ajusta stock manualmente o importa `.xlsx`, `.xls` y `.csv` con columnas
   `PRODUCTO` y `STOCK`, y una columna opcional `PRECIO`.
-- Actualiza la tasa de cambio y consulta el historial de ciclos de cobro.
-- Puede cambiar entre tema claro y oscuro.
+- Actualiza la tasa de cambio, revisa histórico de ciclos y cierra períodos de
+  cobro.
+- Puede cambiar el tema visual y operar desde la misma experiencia web o la
+  versión instalada como app.
 
 ## Ciclos de cobro
 
-Los cortes ocurren los días 3, 10, 17 y 25 de cada mes. La app calcula el
-próximo corte y los días restantes. Al abrir el panel administrativo, busca
-ciclos vencidos que falten y calcula los pagos y consumos completados dentro
-del período. El proceso espera los snapshots iniciales confirmados por el
-servidor y crea cada cierre en una transacción únicamente si todavía no existe.
+Los cortes se calculan en días fijos del mes y la app detecta el próximo corte
+junto con días restantes. Cuando un administrador abre la vista de
+administración, la aplicación revisa ciclos vencidos pendientes y consolida
+pagos y consumos completados en el período.
 
-No es una tarea de servidor programada: para ponerse al día, un administrador
-debe abrir la aplicación después de un corte. Se revisan hasta 12 ciclos
-anteriores consecutivos y se detiene el recorrido al encontrar uno ya cerrado.
+La lógica espera los snapshots iniciales confirmados por el servidor y crea cada
+cierre en una transacción solo si aún no existe. No es una tarea automatizada
+por servidor; un administrador debe abrir la app después de un corte para
+ponerla al día. La revisión se hace hasta 12 ciclos consecutivos, y se detiene
+al encontrar uno ya cerrado.
+
+## PWA y empaquetado nativo
+
+### PWA
+
+- `vite-plugin-pwa` configura la app como instalable y con actualización
+  automática.
+- Se registra un service worker con cache de recursos estáticos y cache Network
+  First para llamadas de Firebase.
+- La aplicación se puede instalar en escritorio y dispositivos móviles sin usar
+  un store.
+
+### Capacitor
+
+- El proyecto está configurado para packaging nativo en Android e iOS.
+- `capacitor.config.ts` define el identificador de la app y el directorio de
+  salida web (`dist`).
+- Los directorios `android/` e `ios/` ya existen y están listos para sincronizar
+  y compilar con Capacitor.
+- Los comandos principales son:
+
+```bash
+npm run build
+npx cap sync
+```
+
+La app aún no está publicada en tiendas ni conectada a un flujo de distribución
+nativo completo; esto queda como siguiente paso operativo.
+
+## Cloud Functions y backend
+
+Hay un scaffold de Cloud Functions en `functions/` preparado con Node.js 22 y
+Firebase Functions v7. El código incluye validaciones de UID y acceso de admin,
+pero la aplicación sigue operando con Firestore y la lógica del cliente actual
+hasta que el backend se despliegue y valide en producción.
+
+Este estado es intencional:
+
+- No se conectan Callable Functions desde el cliente.
+- No se despliegan reglas que dependan del backend antes de migrar y probar la
+  experiencia completa.
+- La notificación externa por CallMeBot queda aplazada y no se ejecuta en este
+  repositorio.
 
 ## Datos de Firestore
 
@@ -81,25 +139,26 @@ anteriores consecutivos y se detiene el recorrido al encontrar uno ya cerrado.
 | `config/global` | `exchangeRate`, `cutoffDays`, `bankDetails` |
 | `cycles/{id}` | `periodStart`, `periodEnd`, `totalCollected`, `totalConsumption`, `closedAt` |
 
-## Seguridad: limitación actual
+## Seguridad y limitaciones actuales
 
 `firestore.rules` restringe por rol el acceso a perfiles, productos,
-configuración y ciclos. **La regla actual `allow create` de `transactions` es
-más permisiva que el flujo esperado:** las condiciones que limitan al cliente
-a crear solo transacciones propias y con estado `PENDING` están comentadas.
-Tal como está escrita, cualquier usuario autenticado puede crear documentos
-de transacción que la interfaz no permitiría.
+configuración y ciclos. La documentación refleja el comportamiento que la app
+espera y el estado operativo actual, pero la validación de la interfaz no
+sustituye las reglas de Firestore.
 
-La validación de la interfaz no sustituye las reglas de Firestore. Antes de
-confiar en esta restricción en producción, corrige la regla para validar UID,
-tipo, estado y campos permitidos, y prueba el acceso con los roles cliente y
-administrador. Esta documentación no modifica las reglas.
+Antes de confiar en producción:
+
+- validar UID, tipo y estado en las reglas para transacciones;
+- comprobar permisos de cliente y administrador con datos reales;
+- confirmar que los scripts de Admin SDK solo se ejecutan en entorno autorizado.
+
+La app no crea cuentas `ADMIN` desde el cliente; ese proceso se hace con scripts
+server-side y credenciales de Application Default Credentials.
 
 ## Scripts administrativos
 
-Los scripts de `scripts/` usan Firebase Admin SDK, que evita las reglas de
-Firestore. Ejecútalos solo desde una máquina o Codespace autorizado, nunca
-desde el navegador. Para Application Default Credentials:
+Los scripts de `scripts/` usan Firebase Admin SDK y se ejecutan fuera del
+navegador. Para configurarlos, se recomienda:
 
 ```bash
 gcloud auth application-default login
@@ -107,21 +166,20 @@ gcloud auth application-default login
 
 | Script | Uso |
 |---|---|
-| `create-admin.mjs` | Crear cuenta admin o actualizar su PIN: `node scripts/create-admin.mjs "ADMINISTRADOR" "pinSeguro" --project=rapidbodegon` |
-| `reset-pin.mjs` | Cambiar el PIN de un cliente sin alterar su perfil o saldo: `node scripts/reset-pin.mjs "JUAN PEREZ" "nuevoPinDe8Digitos" --project=rapidbodegon` |
-| `seed-data.mjs` | Cargar productos iniciales de ejemplo y `config/global`: `node scripts/seed-data.mjs --project=rapidbodegon` |
-| `import-products.mjs` | Eliminar los productos de prueba `p1` a `p8` e importar el catálogo del script: `node scripts/import-products.mjs --project=rapidbodegon` |
+| `create-admin.mjs` | Crear o actualizar cuenta admin y PIN: `node scripts/create-admin.mjs "ADMINISTRADOR" "pinSeguro" --project=rapidbodegon` |
+| `reset-pin.mjs` | Cambiar PIN de un cliente sin tocar perfil ni saldo: `node scripts/reset-pin.mjs "JUAN PEREZ" "nuevoPinDe8Digitos" --project=rapidbodegon` |
+| `seed-data.mjs` | Cargar productos iniciales y `config/global`: `node scripts/seed-data.mjs --project=rapidbodegon` |
+| `import-products.mjs` | Reemplazar productos de prueba `p1` a `p8` con catálogo del script: `node scripts/import-products.mjs --project=rapidbodegon` |
 
-El importador asigna stock inicial de 100 unidades. Revisa los cambios que
-hará cada script y actualiza las existencias reales desde el panel de
-inventario antes de operar.
+El importador asigna un stock inicial de 100 unidades. Revisa los cambios antes
+de operar y ajusta existencias desde el panel de inventario si se requiere
+contenido real del negocio.
 
 ## Desarrollo local
 
-Requiere Node.js, Firebase Authentication (Email/Password) y Firestore. La
-configuración de Firebase se importa desde `firebase-applet-config.json` a
-través de `src/firebase.ts`; apunta el archivo al proyecto correcto y no
-incluyas credenciales de Firebase Admin en el cliente.
+Requiere Node.js, Firebase Auth (Email/Password) y Firestore. La configuración
+se carga desde `firebase-applet-config.json` a través de `src/firebase.ts` y
+debe apuntar al proyecto correcto.
 
 ```bash
 npm install
@@ -130,23 +188,30 @@ npm run build
 npm run analyze
 ```
 
-El build de producción se genera en `dist/`. Vite separa Recharts y SheetJS
-en chunks propios. `package.json` no define actualmente un script de pruebas
-automatizadas. `npm run analyze` genera `dist/stats.html` con el detalle de
-composición y tamaño de cada bundle; no forma parte del build normal.
+### Scripts disponibles
+
+- `npm run dev`: arranque del entorno de desarrollo.
+- `npm run build`: build de producción de la app.
+- `npm run analyze`: genera `dist/stats.html` para revisar tamaño y chunks.
+- `npm run cap:sync`: compila y sincroniza cambios con Capacitor.
+- `npm --prefix functions run build`: compila Cloud Functions.
+
+El build de producción se genera en `dist/`. Vite separa en chunks Firebase,
+Recharts y XLSX para reducir el peso inicial de la carga.
 
 ## Despliegue
 
-Vercel despliega desde la rama `main` según la configuración del proyecto.
-Un push inicia el despliegue, pero verifica su estado antes de considerar el
-cambio disponible en producción. El dominio documentado es
-`rapid-bodegon-alexyanez1993-5085.vercel.app`.
+- La web app está configurada para despliegue en Vercel desde la rama `main`.
+- Un push inicia despliegue, pero se debe verificar el estado real antes de
+  asumir que la versión está en producción.
+- El dominio documentado sigue siendo `rapid-bodegon-alexyanez1993-5085.vercel.app`.
+- La parte nativa Android/iOS queda lista para sincronizarse y compilarse, pero
+  no implica publicación automática en stores.
 
 ## Documentación adicional
 
-- `memory.md`: contexto técnico y arquitectura del repositorio.
-- `agent.md`: pautas de trabajo para futuras modificaciones; es documentación
-  normal, no un agente personalizado seleccionable en VS Code.
+- `memory.md`: contexto técnico, stack y arquitectura del repositorio.
+- `agent.md`: pautas internas de trabajo para futuras modificaciones.
 
 ## Licencia
 
