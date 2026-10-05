@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
 import { getNextCutoff, getPreviousCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
@@ -12,7 +12,6 @@ import { ThemeToggle } from '../components/ThemeToggle';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-import * as XLSX from 'xlsx';
 import type { ProductImportRow } from '../store/AppContext';
 
 type ActionResult = { success: boolean; error?: string };
@@ -49,54 +48,89 @@ export const AdminView = () => {
     setNewRate(String(config.exchangeRate ?? ''));
   }, [config.exchangeRate]);
 
-  const clients = users.filter(u => u.role === 'CLIENT');
-  const filteredClients = clients.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  const usersById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
+  const productsById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const clients = useMemo(() => users.filter(u => u.role === 'CLIENT'), [users]);
+  const filteredClients = useMemo(
+    () => clients.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())),
+    [clients, searchTerm]
+  );
 
-  const totalCredit = clients.reduce((acc, client) => acc + client.balanceUSD, 0);
-  const clientsWithDebt = clients.filter(c => c.balanceUSD > 0).length;
+  const totalCredit = useMemo(
+    () => clients.reduce((acc, client) => acc + client.balanceUSD, 0),
+    [clients]
+  );
+  const clientsWithDebt = useMemo(
+    () => clients.filter(c => c.balanceUSD > 0).length,
+    [clients]
+  );
 
   // Ciclo actual = desde el último corte hasta ahora. Antes esto sumaba
   // TODO el histórico, lo cual hacía que "Recaudado (Ciclo Actual)" nunca
   // bajara a $0 después de un corte.
   const cycleStart = getPreviousCutoff();
-  const currentCyclePayments = transactions
-    .filter(t => t.type === 'PAYMENT' && t.status === 'COMPLETED')
-    .filter(t => new Date(t.date).getTime() >= cycleStart.getTime())
-    .reduce((acc, t) => acc + t.amountUSD, 0);
+  const cycleStartTimestamp = cycleStart.getTime();
+  const analytics = useMemo(() => {
+    let currentCyclePayments = 0;
+    const pendingPayments: typeof transactions = [];
+    const pendingConsumptions: typeof transactions = [];
+    const dailySalesMap: Record<string, number> = {};
+    const clientSalesMap: Record<string, number> = {};
 
-  const pendingPayments = transactions.filter(t => t.type === 'PAYMENT' && t.status === 'PENDING');
-  const pendingConsumptions = transactions.filter(t => t.type === 'CONSUMPTION' && t.status === 'PENDING');
+    for (const transaction of transactions) {
+      if (transaction.type === 'PAYMENT') {
+        if (transaction.status === 'PENDING') pendingPayments.push(transaction);
+        if (
+          transaction.status === 'COMPLETED' &&
+          new Date(transaction.date).getTime() >= cycleStartTimestamp
+        ) {
+          currentCyclePayments += transaction.amountUSD;
+        }
+      } else if (transaction.type === 'CONSUMPTION') {
+        if (transaction.status === 'PENDING') {
+          pendingConsumptions.push(transaction);
+        } else if (transaction.status === 'COMPLETED') {
+          const date = dayKey(transaction.date);
+          dailySalesMap[date] = (dailySalesMap[date] || 0) + transaction.amountUSD;
+          clientSalesMap[transaction.userId] =
+            (clientSalesMap[transaction.userId] || 0) + transaction.amountUSD;
+        }
+      }
+    }
 
-  const consumptions = transactions.filter(t => t.type === 'CONSUMPTION' && t.status === 'COMPLETED');
+    const dailySalesData = Object.keys(dailySalesMap)
+      .sort()
+      .map(key => {
+        const [y, m, d] = key.split('-').map(Number);
+        return {
+          date: new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+          total: dailySalesMap[key]
+        };
+      });
 
-  const dailySalesMap = consumptions.reduce((acc, curr) => {
-    const key = dayKey(curr.date);
-    acc[key] = (acc[key] || 0) + curr.amountUSD;
-    return acc;
-  }, {} as Record<string, number>);
-
-  const dailySalesData = Object.keys(dailySalesMap)
-    .sort()
-    .map(key => {
-      const [y, m, d] = key.split('-').map(Number);
+    const clientSalesData = Object.keys(clientSalesMap).map(userId => {
+      const client = usersById.get(userId);
       return {
-        date: new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-        total: dailySalesMap[key]
+        name: client ? client.name.split(' ')[0] : 'Desconocido',
+        total: clientSalesMap[userId]
       };
-    });
+    }).sort((a, b) => b.total - a.total).slice(0, 5);
 
-  const clientSalesMap = consumptions.reduce((acc, curr) => {
-    acc[curr.userId] = (acc[curr.userId] || 0) + curr.amountUSD;
-    return acc;
-  }, {} as Record<string, number>);
-
-  const clientSalesData = Object.keys(clientSalesMap).map(userId => {
-    const client = users.find(u => u.id === userId);
     return {
-      name: client ? client.name.split(' ')[0] : 'Desconocido',
-      total: clientSalesMap[userId]
+      currentCyclePayments,
+      pendingPayments,
+      pendingConsumptions,
+      dailySalesData,
+      clientSalesData
     };
-  }).sort((a, b) => b.total - a.total).slice(0, 5);
+  }, [transactions, cycleStartTimestamp, usersById]);
+  const {
+    currentCyclePayments,
+    pendingPayments,
+    pendingConsumptions,
+    dailySalesData,
+    clientSalesData
+  } = analytics;
 
   const runAction = async (id: string, fn: () => Promise<ActionResult>) => {
     if (busyId) return;
@@ -203,6 +237,7 @@ export const AdminView = () => {
     setImportMsg('');
 
     try {
+      const XLSX = await import('xlsx');
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -397,8 +432,8 @@ export const AdminView = () => {
               <CardContent className="p-0">
                 <div className="divide-y divide-slate-700/50">
                   {pendingConsumptions.map(tx => {
-                    const client = users.find(u => u.id === tx.userId);
-                    const product = products.find(p => p.id === tx.productId);
+                    const client = usersById.get(tx.userId);
+                    const product = tx.productId ? productsById.get(tx.productId) : undefined;
                     const qty = Number(tx.quantity) || 0;
                     const realAmount = product ? Math.round(product.priceUSD * qty * 100) / 100 : null;
                     return (
@@ -462,7 +497,7 @@ export const AdminView = () => {
               <CardContent className="p-0">
                 <div className="divide-y divide-slate-700/50">
                   {pendingPayments.map(tx => {
-                    const client = users.find(u => u.id === tx.userId);
+                    const client = usersById.get(tx.userId);
                     return (
                       <div key={tx.id} className="p-4 flex items-center justify-between bg-yellow-500/5">
                         <div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
 import { getNextCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
@@ -53,15 +53,27 @@ export const ClientView = () => {
   const [consMessage, setConsMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
   const [submittingCons, setSubmittingCons] = useState(false);
 
+  const currentUserId = currentUser?.id;
+  const userTransactions = useMemo(
+    () => transactions.filter(t => t.userId === currentUserId),
+    [transactions, currentUserId]
+  );
+  const myConsumptions = useMemo(
+    () => userTransactions.filter(t => t.type === 'CONSUMPTION'),
+    [userTransactions]
+  );
+  const myPayments = useMemo(
+    () => userTransactions.filter(t => t.type === 'PAYMENT'),
+    [userTransactions]
+  );
+  const pendingPaymentsAmount = useMemo(
+    () => myPayments
+      .filter(t => t.status === 'PENDING')
+      .reduce((acc, t) => acc + t.amountUSD, 0),
+    [myPayments]
+  );
+
   if (!currentUser) return null;
-
-  const userTransactions = transactions.filter(t => t.userId === currentUser.id);
-  const myConsumptions = userTransactions.filter(t => t.type === 'CONSUMPTION');
-  const myPayments = userTransactions.filter(t => t.type === 'PAYMENT');
-
-  const pendingPaymentsAmount = myPayments
-    .filter(t => t.status === 'PENDING')
-    .reduce((acc, t) => acc + t.amountUSD, 0);
 
   const rate = config.exchangeRate;
   const canUseBs = !!rate && rate > 0;
@@ -131,7 +143,7 @@ export const ClientView = () => {
     setTimeout(() => setPaymentSuccess(false), 3000);
   };
 
-  const availableProducts = products.filter(p => p.stock > 0);
+  const availableProducts = useMemo(() => products.filter(p => p.stock > 0), [products]);
 
   const handleRequestConsumption = async (e: React.FormEvent) => {
     e.preventDefault();

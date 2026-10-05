@@ -39,6 +39,7 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,svg,png,ico,webp,woff2}'],
+          globIgnores: ['**/stats.html'],
           runtimeCaching: [
             {
               urlPattern: ({ url }) => /https?:\/\/(firestore\.googleapis\.com|securetoken\.googleapis\.com|identitytoolkit\.googleapis\.com|www\.googleapis\.com)/.test(url.href),
@@ -99,10 +100,7 @@ export default defineConfig(() => {
             'firebase-firestore': ['firebase/firestore'],
             'firebase-app': ['firebase/app'],
             'firebase-re2': ['re2js'],
-            // Estas dos librerías solo las usa AdminView.tsx y pesan mucho.
-            // Separarlas en su propio archivo significa que un cliente
-            // normal (que nunca abre el panel de admin) no las descarga.
-            recharts: ['recharts'],
+            // XLSX se carga de forma dinámica solo cuando se importa inventario.
             xlsx: ['xlsx'],
           },
         },

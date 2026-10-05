@@ -14,7 +14,8 @@ en la versión inicial:
 
 - PWA instalable con soporte offline y actualización automática.
 - Empaquetado nativo para Android e iOS con Capacitor.
-- Separación de bundles para optimizar carga inicial (Firebase, Recharts, XLSX).
+- Carga diferida del panel administrativo y de XLSX hasta solicitar una importación;
+  Firebase conserva chunks separados y la PWA precarga recursos para uso offline.
 - Preparación de Cloud Functions (Node 22) para backend server-side, sin
   conectarlas aún al cliente ni desplegarlas en producción.
 - Soporte para temas claro/oscuro, importación de inventario y cierre de ciclos.
@@ -198,7 +199,42 @@ npm run analyze
 - `npm --prefix functions run build`: compila Cloud Functions.
 
 El build de producción se genera en `dist/`. Vite separa en chunks Firebase,
-Recharts y XLSX para reducir el peso inicial de la carga.
+el panel administrativo (incluidos sus gráficos) y XLSX. El parser XLSX se
+solicita al elegir un archivo. El service worker mantiene la precarga de todos
+los recursos de producción para conservar los flujos offline.
+
+### Medición local de carga
+
+Medición del build con `npm run analyze` el 5 de octubre de 2026, comparando la
+referencia antes de optimizar con el mismo entorno después del cambio. Los
+tamaños son los de Vite con gzip; el total inicial suma los scripts vinculados
+por `index.html`, no incluye CSS ni representa una medición de red real.
+
+| Scripts vinculados al inicio | Antes | Después |
+|---|---:|---:|
+| App (`index`) | 86.54 kB | 90.33 kB |
+| Firebase (app, auth, Firestore y dependencias) | 172.67 kB | 172.67 kB |
+| Recharts | 112.09 kB | diferido con el panel admin |
+| **Total inicial aproximado** | **371.30 kB** | **263.00 kB** |
+
+El grafo inicial del HTML ya no descarga Recharts: reducción aproximada de
+108.30 kB (29 %) en JavaScript vinculado al inicio. Al entrar como admin, el
+chunk del panel incluye Recharts. XLSX se descarga al solicitar una importación,
+no al abrir el panel.
+
+La PWA conserva la precarga offline de todos los chunks, también los diferidos;
+por eso este cambio reduce los scripts vinculados al arranque de la página,
+pero no el volumen total de una instalación/actualización inicial del service
+worker. El informe `dist/stats.html` se excluye de esa precarga: es un artefacto
+de análisis, no un recurso de la aplicación. Los logs anteriores de `npm run
+analyze` incluían ese informe y no permiten comparar correctamente el tamaño de
+la precarga entre builds; el build normal posterior registró 18 entradas
+(1835.23 KiB), incluidos los chunks diferidos para uso offline.
+
+No se midieron LCP, INP o CLS ni la respuesta visual con datos representativos:
+no había navegador automatizado ni dispositivo disponible en el entorno. Estos
+tamaños de build no deben presentarse como Web Vitals ni como validación de
+producción.
 
 ## Despliegue
 
