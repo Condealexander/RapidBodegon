@@ -4,7 +4,6 @@ const config: CapacitorConfig = {
   appId: 'com.rapidbodegon.app',
   appName: 'RapidBodegón',
   webDir: 'dist',
-  bundledWebRuntime: false,
   server: {
     androidScheme: 'https',
   },
