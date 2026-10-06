@@ -1,7 +1,7 @@
 import React from 'react';
 
-export const Card = ({ children, className = '' }: { children: React.ReactNode, className?: string }) => (
-  <div className={`bg-slate-800 rounded-xl shadow-lg border border-slate-700/50 overflow-hidden ${className}`}>
+export const Card = ({ children, className = '', id }: { children: React.ReactNode, className?: string, id?: string }) => (
+  <div id={id} className={`bg-slate-800 rounded-xl shadow-lg border border-slate-700/50 overflow-hidden ${className}`}>
     {children}
   </div>
 );

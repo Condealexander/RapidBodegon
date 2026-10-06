@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
-import { getNextCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
+import { CUTOFF_DAYS, getNextCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
 import {
   Copy, Check, LogOut, Wallet, Info, Receipt, CheckCircle2, Clock, AlertCircle, ShoppingBag, CalendarClock
 } from 'lucide-react';
@@ -86,6 +86,7 @@ export const ClientView = () => {
 
   const nextCutoff = getNextCutoff();
   const daysLeft = daysUntilNextCutoff();
+  const isCutoffDay = CUTOFF_DAYS.includes(new Date().getDate());
   const bankDetails = [
     { key: 'bank', label: 'Banco', value: config.bankDetails.bank },
     { key: 'owner', label: 'Titular', value: config.bankDetails.owner },
@@ -192,6 +193,34 @@ export const ClientView = () => {
           </Button>
         </div>
       </div>
+
+      {isCutoffDay && currentUser.balanceUSD > 0 && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="max-w-4xl mx-auto mb-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        >
+          <div className="flex items-start gap-3">
+            <CalendarClock size={20} className="text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-amber-400">📅😁 Hoy es día de corte</p>
+              <p className="text-sm text-slate-200 mt-1">
+                ⚠️ Tienes un saldo pendiente de {formatCurrency(currentUser.balanceUSD)}. 😎 Puedes cancelar o abonar desde “Reportar Pago”.
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                ⏳ Los pagos reportados se reflejan en tu saldo cuando sean validados.
+              </p>
+            </div>
+          </div>
+          <Button
+            variant="secondary"
+            className="shrink-0"
+            onClick={() => document.getElementById('report-payment')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            💳 Ir a reportar pago
+          </Button>
+        </div>
+      )}
 
       <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
 
@@ -313,28 +342,28 @@ export const ClientView = () => {
         {/* Columna derecha */}
         <div className="space-y-6">
           {/* Reportar pago */}
-          <Card>
-            <CardHeader title="Reportar Pago" />
+          <Card id="report-payment">
+            <CardHeader title="💳 Reportar Pago" />
             <CardContent>
               {paymentSuccess ? (
                 <div className="text-center py-8">
                   <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 mb-4">
                     <CheckCircle2 size={24} />
                   </div>
-                  <h3 className="text-lg font-medium text-white mb-2">Pago Reportado</h3>
-                  <p className="text-slate-400 text-sm">El administrador validará su pago en breve.</p>
+                  <h3 className="text-lg font-medium text-white mb-2">✅ Pago reportado</h3>
+                  <p className="text-slate-400 text-sm">⏳ El administrador validará su pago en breve.</p>
                 </div>
               ) : (
                 <form onSubmit={handleReportPayment} className="space-y-4">
                   {paymentError && (
                     <div className="flex items-start gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
                       <AlertCircle size={16} className="shrink-0 mt-0.5" />
-                      <span>{paymentError}</span>
+                      <span>⚠️ {paymentError}</span>
                     </div>
                   )}
 
                   <div>
-                    <Label>Monto pagado</Label>
+                    <Label>💵 Monto pagado</Label>
                     <div className="flex gap-2 mb-2">
                       <Button
                         type="button"
@@ -372,7 +401,7 @@ export const ClientView = () => {
                   </div>
 
                   <div>
-                    <Label>Referencia Bancaria</Label>
+                    <Label>🧾 Referencia bancaria</Label>
                     <Input
                       type="text"
                       inputMode="numeric"
@@ -385,7 +414,7 @@ export const ClientView = () => {
                   </div>
 
                   <Button type="submit" className="w-full" disabled={submittingPayment}>
-                    {submittingPayment ? 'Enviando...' : 'Enviar Reporte'}
+                    {submittingPayment ? '⏳ Enviando...' : '📤 Enviar reporte'}
                   </Button>
                 </form>
               )}
