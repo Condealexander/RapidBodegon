@@ -101,7 +101,7 @@ export default defineConfig(() => {
             'firebase-app': ['firebase/app'],
             'firebase-re2': ['re2js'],
             // XLSX se carga de forma dinámica solo cuando se importa inventario.
-            xlsx: ['xlsx'],
+            xlsx: ['xlsx'],recharts: ['recharts'],
           },
         },
       },
