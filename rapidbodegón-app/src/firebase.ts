@@ -9,7 +9,12 @@ const useEmulators = import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
 
 const recaptchaSiteKey = (import.meta.env.VITE_RECAPTCHA_SITE_KEY as string | undefined) ?? '';
 
-if (recaptchaSiteKey && !useEmulators) {
+// TEMPORALMENTE DESACTIVADO: el script de reCAPTCHA no carga en producción
+// y tumba Firestore entero. App Check no está en "Enforced" todavía, así
+// que esto no quita ninguna protección activa.
+const APP_CHECK_ENABLED = false;
+
+if (APP_CHECK_ENABLED && recaptchaSiteKey && !useEmulators) {
   try {
     initializeAppCheck(app, {
       provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
