@@ -1,7 +1,19 @@
 import React, { useState } from 'react';
 import { useApp } from '../store/AppContext';
-import { Store, KeyRound, User as UserIcon, UserPlus, LogIn, Eye, EyeOff } from 'lucide-react';
+import {
+  Eye,
+  EyeOff,
+  KeyRound,
+  LoaderCircle,
+  LogIn,
+  ShieldCheck,
+  Store,
+  User as UserIcon,
+  UserPlus,
+} from 'lucide-react';
 import { Card, CardContent, Input, Button, Label } from '../components';
+
+const snackShapes = ['🍿', '🥨', '🍪', '🍫', '🥜', '🍟', '🍩', '🍿', '🥨', '🍪'];
 
 export const Login = () => {
   const { login, register } = useApp();
@@ -63,55 +75,60 @@ export const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-600/20 text-blue-500 mb-4">
-            <Store size={32} />
-          </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">RapidBodegón</h1>
-          <p className="text-slate-400 mt-2">Control de Crédito y Consumo</p>
-        </div>
+    <main className="login-shell relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-8 sm:px-6">
+      <div className="login-snack-rain" aria-hidden="true">
+        {snackShapes.map((snack, index) => (
+          <span className="login-snack" key={`${snack}-${index}`}>{snack}</span>
+        ))}
+      </div>
+      <div className="login-glow login-glow-one" aria-hidden="true" />
+      <div className="login-glow login-glow-two" aria-hidden="true" />
 
-        <Card>
-          <CardContent>
-            <div className="flex border-b border-slate-700/50 mb-6 pb-2 gap-4 justify-center">
+      <div className="login-content relative z-10 w-full max-w-md">
+        <header className="mb-7 text-center sm:mb-8">
+          <div className="login-mark-wrap mx-auto mb-5">
+            <div className="login-mark">
+              <Store size={32} strokeWidth={1.8} aria-hidden="true" />
+            </div>
+          </div>
+          <p className="login-eyebrow">Tu bodega, más cerca</p>
+          <h1 className="login-title">RapidBodegón</h1>
+          <p className="login-description">Control de crédito y consumo</p>
+        </header>
+
+        <Card className="login-card">
+          <CardContent className="login-card-content">
+            <div className="login-mode-switch mb-6" role="group" aria-label="Tipo de acceso">
               <button
                 type="button"
-                className={`flex items-center gap-2 pb-2 text-sm font-medium transition-colors border-b-2 ${
-                  !isRegistering
-                    ? 'border-blue-500 text-white'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
+                aria-pressed={!isRegistering}
+                className={`login-mode-button flex items-center justify-center gap-2 ${!isRegistering ? 'is-active' : ''}`}
                 onClick={() => switchMode(false)}
               >
-                <LogIn size={16} /> Iniciar Sesión
+                <LogIn size={16} aria-hidden="true" /> Iniciar sesión
               </button>
               <button
                 type="button"
-                className={`flex items-center gap-2 pb-2 text-sm font-medium transition-colors border-b-2 ${
-                  isRegistering
-                    ? 'border-blue-500 text-white'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
+                aria-pressed={isRegistering}
+                className={`login-mode-button flex items-center justify-center gap-2 ${isRegistering ? 'is-active' : ''}`}
                 onClick={() => switchMode(true)}
               >
-                <UserPlus size={16} /> Registrarme
+                <UserPlus size={16} aria-hidden="true" /> Registrarme
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-5">
+            <form onSubmit={handleSubmit} className="login-form space-y-5">
               {error && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
+                <div role="alert" className="login-error rounded-lg border p-3 text-center text-sm">
                   {error}
                 </div>
               )}
 
               <div>
-                <Label htmlFor="name">Nombre y Apellido</Label>
-                <div className="relative">
+                <Label htmlFor="name" className="login-label">Nombre y apellido</Label>
+                <div className="login-field-shell relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <UserIcon size={18} className="text-slate-500" />
+                    <UserIcon size={18} className="login-input-icon" aria-hidden="true" />
                   </div>
                   <Input
                     id="name"
@@ -127,12 +144,12 @@ export const Login = () => {
               </div>
 
               <div>
-                <Label htmlFor="pin">
+                <Label htmlFor="pin" className="login-label">
                   {isRegistering ? 'PIN Secreto (mínimo 8 dígitos)' : 'PIN Secreto'}
                 </Label>
-                <div className="relative">
+                <div className="login-field-shell relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <KeyRound size={18} className="text-slate-500" />
+                    <KeyRound size={18} className="login-input-icon" aria-hidden="true" />
                   </div>
                   <Input
                     id="pin"
@@ -146,7 +163,7 @@ export const Login = () => {
                   />
                   <button
                     type="button"
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300"
+                    className="login-visibility-button absolute inset-y-0 right-0 flex items-center pr-3"
                     onClick={() => setShowPin(v => !v)}
                     aria-label={showPin ? 'Ocultar PIN' : 'Mostrar PIN'}
                   >
@@ -157,10 +174,10 @@ export const Login = () => {
 
               {isRegistering && (
                 <div>
-                  <Label htmlFor="confirmPin">Confirma tu PIN</Label>
-                  <div className="relative">
+                  <Label htmlFor="confirmPin" className="login-label">Confirma tu PIN</Label>
+                  <div className="login-field-shell relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <KeyRound size={18} className="text-slate-500" />
+                      <KeyRound size={18} className="login-input-icon" aria-hidden="true" />
                     </div>
                     <Input
                       id="confirmPin"
@@ -176,13 +193,21 @@ export const Login = () => {
                 </div>
               )}
 
-              <Button type="submit" className="w-full py-2.5 text-base mt-2" disabled={submitting}>
-                {submitting ? 'Procesando...' : (isRegistering ? 'Crear mi cuenta' : 'Ingresar al Sistema')}
+              <Button type="submit" className="login-submit mt-2 w-full py-3 text-base" disabled={submitting}>
+                {submitting && <LoaderCircle className="mr-2 animate-spin" size={18} aria-hidden="true" />}
+                {submitting ? 'Procesando...' : (isRegistering ? 'Crear mi cuenta' : 'Ingresar')}
               </Button>
             </form>
+
+            <p className="login-security-note mt-5">
+              <ShieldCheck size={15} aria-hidden="true" />
+              Tu acceso está protegido con PIN
+            </p>
           </CardContent>
         </Card>
+
+        <p className="login-footer mt-5 text-center">Rápido, sencillo y hecho para tu bodega.</p>
       </div>
-    </div>
+    </main>
   );
 };
