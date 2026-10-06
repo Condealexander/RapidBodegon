@@ -6,15 +6,25 @@ import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import './index.css';
 
-registerSW({
-  immediate: true,
-  onOfflineReady() {
-    console.info('PWA lista para uso sin conexión.');
-  },
-});
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
   </StrictMode>,
 );
+
+const registerServiceWorker = () => {
+  window.setTimeout(() => {
+    registerSW({
+      immediate: true,
+      onOfflineReady() {
+        console.info('PWA lista para uso sin conexión.');
+      },
+    });
+  }, 1200);
+};
+
+if (document.readyState === 'complete') {
+  registerServiceWorker();
+} else {
+  window.addEventListener('load', registerServiceWorker, { once: true });
+}

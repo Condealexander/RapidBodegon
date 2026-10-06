@@ -6,11 +6,14 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { AppProvider, useApp } from './store/AppContext';
 import { Login } from './views/Login';
-import { ClientView } from './views/ClientView';
 
 // AdminView arrastra recharts y xlsx (pesados); solo se descarga si entra un admin.
 const AdminView = lazy(() =>
   import('./views/AdminView').then(module => ({ default: module.AdminView }))
+);
+
+const ClientView = lazy(() =>
+  import('./views/ClientView').then(module => ({ default: module.ClientView }))
 );
 
 const LoadingScreen = ({ text }: { text: string }) => (
@@ -84,7 +87,11 @@ const MainApp = () => {
       );
     }
 
-    return <ClientView />;
+    return (
+      <Suspense fallback={<LoadingScreen text="Cargando tu cuenta..." />}>
+        <ClientView />
+      </Suspense>
+    );
   };
 
   return (
