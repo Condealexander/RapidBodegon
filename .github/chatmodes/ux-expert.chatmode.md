@@ -36,7 +36,7 @@ que se maneje como un cambio aparte, en vez de modificarlo tú directamente.
   Tailwind nueva (`bg-slate-XXX`, `text-slate-XXX`, etc.), confirma si
   `theme-overrides.css` ya la cubre. Si no, agrégala ahí también — una
   clase nueva sin su contraparte en el override queda rota en tema claro.
-- **Componentes base en `src/components/ui/`** (`Card`, `Button`, `Input`,
+- **Componentes base en `src/components/index.tsx`** (`Card`, `Button`, `Input`,
   `Label`, `CardHeader`, `CardContent`): reutilízalos siempre que exista
   uno que sirva, en vez de crear markup nuevo que haga lo mismo distinto.
 - **Tono del copy existente**: cercano, en español venezolano informal
