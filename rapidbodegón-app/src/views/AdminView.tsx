@@ -24,7 +24,7 @@ const dayKey = (iso: string) => {
 export const AdminView = () => {
   const {
     users, products, transactions, config, cycles, logout,
-    addConsumption, updateExchangeRate, approvePayment, rejectPayment,
+    addConsumption, updateExchangeRate, refreshExchangeRateFromSources, approvePayment, rejectPayment,
     approveConsumption, rejectConsumption,
     updateProductStocks, importProducts
   } = useApp();
@@ -47,6 +47,22 @@ export const AdminView = () => {
   useEffect(() => {
     setNewRate(String(config.exchangeRate ?? ''));
   }, [config.exchangeRate]);
+
+  useEffect(() => {
+    let active = true;
+    setRateMsg('Consultando la tasa automática...');
+    void refreshExchangeRateFromSources().then(result => {
+      if (!active) return;
+      if (!result.success) {
+        setRateMsg(result.error || 'No se pudo actualizar la tasa automáticamente.');
+      } else if (result.updated) {
+        setRateMsg(`Tasa promedio actualizada: ${formatBs(1, result.rate)}.`);
+      } else {
+        setRateMsg('La tasa ya se consultó hoy o fue ajustada manualmente.');
+      }
+    });
+    return () => { active = false; };
+  }, [refreshExchangeRateFromSources]);
 
   const usersById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
   const productsById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
@@ -293,7 +309,7 @@ export const AdminView = () => {
         </div>
         <div className="flex items-center gap-4 bg-slate-900 p-2 rounded-lg border border-slate-800">
           <div className="flex items-center gap-2 px-3 border-r border-slate-700">
-            <span className="text-xs text-slate-400">Tasa (BCV):</span>
+            <span className="text-xs text-slate-400">Tasa de cobro:</span>
             <span className="font-mono text-emerald-400">{formatBs(1, config.exchangeRate)}</span>
           </div>
           <ThemeToggle />
@@ -802,7 +818,7 @@ export const AdminView = () => {
             <CardContent>
               <form onSubmit={handleUpdateRate} className="space-y-4">
                 <div>
-                  <Label>Tasa de Cambio (Bs/USD)</Label>
+                  <Label>Tasa de cobro (Bs/USD)</Label>
                   <div className="flex gap-2">
                     <Input
                       type="number"
@@ -813,6 +829,16 @@ export const AdminView = () => {
                     <Button type="submit" variant="secondary">Actualizar</Button>
                   </div>
                   {rateMsg && <p className="text-xs text-slate-400 mt-2">{rateMsg}</p>}
+                  {config.exchangeRateUpdatedAt && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      Origen: {config.exchangeRateSource || 'No especificado'} · Actualizada{' '}
+                      {new Date(config.exchangeRateUpdatedAt).toLocaleString('es-VE', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                        timeZone: 'America/Caracas',
+                      })} (hora de Venezuela)
+                    </p>
+                  )}
                 </div>
               </form>
 

@@ -1,9 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
 import { User, Product, Transaction, AppConfig } from '../types';
 import { mockProducts, mockConfig, mockTransactions } from '../data/mock';
 import { db, auth } from '../firebase';
 import {
-  collection, doc, onSnapshot, setDoc, updateDoc, increment, getDoc,
+  collection, doc, onSnapshot, setDoc, updateDoc, increment, getDoc, getDocFromServer,
   runTransaction, writeBatch, query, where, orderBy, limit
 } from 'firebase/firestore';
 import {
@@ -37,6 +37,27 @@ interface ProductImportResult {
   created: number;
 }
 
+interface ExchangeRateRefreshResult extends RegisterResult {
+  updated: boolean;
+  rate?: number;
+}
+
+interface DollarApiQuote {
+  fuente?: unknown;
+  promedio?: unknown;
+}
+
+const getVenezuelaDateKey = (date = new Date()): string => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Caracas',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
 // Registro histórico de un ciclo de cobro ya cerrado (corte 3/10/17/25).
 export interface Cycle {
   id: string;            // YYYY-MM-DD de la fecha de corte
@@ -66,6 +87,7 @@ interface AppContextType {
   approvePayment: (transactionId: string) => Promise<RegisterResult>;
   rejectPayment: (transactionId: string) => Promise<RegisterResult>;
   updateExchangeRate: (rate: number) => Promise<RegisterResult>;
+  refreshExchangeRateFromSources: () => Promise<ExchangeRateRefreshResult>;
   updateProductStocks: (stocks: Array<{ productId: string; stock: number }>) => Promise<RegisterResult>;
   importProducts: (rows: ProductImportRow[]) => Promise<ProductImportResult | { updated: 0; created: 0; error: string }>;
 }
@@ -508,13 +530,101 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const updateExchangeRate = async (rate: number): Promise<RegisterResult> => {
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return { success: false, error: 'Ingresa una tasa válida.' };
+    }
     try {
-      await setDoc(doc(db, 'config', 'global'), { exchangeRate: rate }, { merge: true });
+      await setDoc(doc(db, 'config', 'global'), {
+        exchangeRate: rate,
+        exchangeRateSource: 'Manual',
+        exchangeRateUpdatedAt: new Date().toISOString(),
+        exchangeRateAutoUpdateDate: getVenezuelaDateKey(),
+      }, { merge: true });
       return { success: true };
     } catch {
       return { success: false, error: 'No se pudo actualizar la tasa de cambio.' };
     }
   };
+
+  const refreshExchangeRateFromSources = useCallback(async (): Promise<ExchangeRateRefreshResult> => {
+    if (currentUser?.role !== 'ADMIN') {
+      return { success: false, updated: false, error: 'Se requieren permisos de administrador.' };
+    }
+
+    const dateKey = getVenezuelaDateKey();
+    const configRef = doc(db, 'config', 'global');
+
+    try {
+      const configSnapshot = await getDocFromServer(configRef);
+      if (configSnapshot.exists() && configSnapshot.get('exchangeRateAutoUpdateDate') === dateKey) {
+        return { success: true, updated: false };
+      }
+
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 10000);
+      let response: Response;
+      try {
+        response = await fetch('https://ve.dolarapi.com/v1/dolares', { signal: controller.signal });
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
+
+      if (!response.ok) {
+        throw new Error(`DolarApi respondió con HTTP ${response.status}.`);
+      }
+      const quotes: unknown = await response.json();
+      if (!Array.isArray(quotes)) {
+        throw new Error('La respuesta de DolarApi no tiene el formato esperado.');
+      }
+
+      const findRate = (source: 'oficial' | 'paralelo'): number | null => {
+        const quote = quotes.find((item): item is DollarApiQuote =>
+          !!item && typeof item === 'object' && (item as DollarApiQuote).fuente === source
+        );
+        const value = quote?.promedio;
+        return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+      };
+
+      const officialRate = findRate('oficial');
+      const parallelRate = findRate('paralelo');
+      if (officialRate === null && parallelRate === null) {
+        throw new Error('DolarApi no devolvió tasas oficiales o paralelas válidas.');
+      }
+
+      const rate = officialRate !== null && parallelRate !== null
+        ? (officialRate + parallelRate) / 2
+        : officialRate ?? parallelRate!;
+      const source = officialRate !== null && parallelRate !== null
+        ? 'Promedio DolarApi (oficial + paralelo)'
+        : officialRate !== null
+          ? 'DolarApi oficial (paralelo no disponible)'
+          : 'DolarApi paralelo (oficial no disponible)';
+
+      return await runTransaction(db, async (transaction) => {
+        const latestConfig = await transaction.get(configRef);
+        if (latestConfig.exists() && latestConfig.get('exchangeRateAutoUpdateDate') === dateKey) {
+          return { success: true, updated: false };
+        }
+        transaction.set(configRef, {
+          exchangeRate: rate,
+          exchangeRateSource: source,
+          exchangeRateUpdatedAt: new Date().toISOString(),
+          exchangeRateAutoUpdateDate: dateKey,
+          exchangeRateOfficial: officialRate,
+          exchangeRateParallel: parallelRate,
+        }, { merge: true });
+        return { success: true, updated: true, rate };
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error desconocido al consultar DolarApi.';
+      console.error('No se pudo actualizar la tasa desde DolarApi:', error);
+      return {
+        success: false,
+        updated: false,
+        error: `No se actualizó la tasa automática (${message}). Se conserva la tasa guardada.`,
+      };
+    }
+  }, [currentUser?.role]);
 
   const updateProductStocks = async (stocks: Array<{ productId: string; stock: number }>): Promise<RegisterResult> => {
     if (stocks.length === 0) {
@@ -599,6 +709,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     approvePayment,
     rejectPayment,
     updateExchangeRate,
+    refreshExchangeRateFromSources,
     updateProductStocks,
     importProducts
   };

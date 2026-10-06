@@ -303,7 +303,7 @@ export const ClientView = () => {
               <div className="mt-4 flex items-start gap-2 p-3 bg-blue-500/10 rounded-lg text-blue-400 text-sm">
                 <Info size={16} className="shrink-0 mt-0.5" />
                 <p>
-                  Tasa del día: <strong>{formatBs(1, config.exchangeRate)}</strong>.
+                  Tasa de cobro: <strong>{formatBs(1, config.exchangeRate)}</strong>.
                   Puede realizar el pago en Bs o $. Una vez realizado, repórtelo en el formulario.
                 </p>
               </div>

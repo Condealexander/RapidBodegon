@@ -41,6 +41,11 @@ export interface Transaction {
 
 export interface AppConfig {
   exchangeRate: number; // Bs per USD
+  exchangeRateSource?: string;
+  exchangeRateUpdatedAt?: string;
+  exchangeRateAutoUpdateDate?: string;
+  exchangeRateOfficial?: number | null;
+  exchangeRateParallel?: number | null;
   cutoffDays: number; // Days until next collection
   bankDetails: {
     bank: string;
