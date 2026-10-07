@@ -1,30 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Sun, Moon } from 'lucide-react';
-
-const STORAGE_KEY = 'rb_theme';
-
-const applyTheme = (theme: 'light' | 'dark') => {
-  document.documentElement.setAttribute('data-theme', theme);
-};
+import { useTheme } from './useTheme';
 
 export const ThemeToggle = () => {
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
-
-  useEffect(() => {
-    let initial: 'light' | 'dark' = 'dark';
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved === 'light' || saved === 'dark') initial = saved;
-    } catch { /* ignorar */ }
-    setTheme(initial);
-    applyTheme(initial);
-  }, []);
+  const { theme, setTheme } = useTheme();
 
   const toggle = () => {
-    const next = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    applyTheme(next);
-    try { localStorage.setItem(STORAGE_KEY, next); } catch { /* ignorar */ }
+    setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   return (

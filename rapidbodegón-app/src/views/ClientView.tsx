@@ -177,7 +177,7 @@ export const ClientView = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-8">
+    <div className="client-view min-h-screen bg-slate-950 text-slate-200 p-4 md:p-8">
       <Onboarding userId={currentUser.id} />
 
       {/* Header */}
@@ -188,7 +188,7 @@ export const ClientView = () => {
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Button variant="secondary" className="text-xs py-1.5 px-3" onClick={logout}>
+          <Button variant="secondary" className="client-action-button text-xs py-1.5 px-3" onClick={logout}>
             <LogOut size={14} className="mr-2" /> Salir
           </Button>
         </div>
@@ -214,7 +214,7 @@ export const ClientView = () => {
           </div>
           <Button
             variant="secondary"
-            className="shrink-0"
+            className="client-action-button client-primary-action shrink-0"
             onClick={() => document.getElementById('report-payment')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
           >
             💳 Ir a reportar pago
@@ -270,7 +270,7 @@ export const ClientView = () => {
             <CardHeader
               title="Datos para Pago Móvil / Transferencia"
               action={
-                <Button variant="secondary" className="px-3 py-1.5 text-xs" onClick={handleCopyAllBankDetails}>
+                <Button variant="secondary" className="client-action-button px-3 py-1.5 text-xs" onClick={handleCopyAllBankDetails}>
                   {copiedKey === 'all' ? <Check size={14} className="mr-1 text-emerald-400" /> : <Copy size={14} className="mr-1" />}
                   {copiedKey === 'all' ? 'Copiado' : 'Copiar todo'}
                 </Button>
@@ -286,7 +286,7 @@ export const ClientView = () => {
                     </div>
                     <Button
                       variant="secondary"
-                      className="p-2 h-auto"
+                      className="client-action-button p-2 h-auto"
                       onClick={() => handleCopy(item.key, item.value)}
                       aria-label={`Copiar ${item.label}`}
                     >
@@ -368,7 +368,7 @@ export const ClientView = () => {
                       <Button
                         type="button"
                         variant={currency === 'USD' ? undefined : 'secondary'}
-                        className="flex-1 py-1.5 text-sm"
+                        className={`client-action-button ${currency === 'USD' ? 'client-primary-action' : ''} flex-1 py-1.5 text-sm`}
                         onClick={() => setCurrency('USD')}
                       >
                         Dólares ($)
@@ -376,7 +376,7 @@ export const ClientView = () => {
                       <Button
                         type="button"
                         variant={currency === 'BS' ? undefined : 'secondary'}
-                        className="flex-1 py-1.5 text-sm"
+                        className={`client-action-button ${currency === 'BS' ? 'client-primary-action' : ''} flex-1 py-1.5 text-sm`}
                         disabled={!canUseBs}
                         onClick={() => setCurrency('BS')}
                       >
@@ -413,7 +413,7 @@ export const ClientView = () => {
                     />
                   </div>
 
-                  <Button type="submit" className="w-full" disabled={submittingPayment}>
+                  <Button type="submit" className="client-action-button client-primary-action w-full" disabled={submittingPayment}>
                     {submittingPayment ? '⏳ Enviando...' : '📤 Enviar reporte'}
                   </Button>
                 </form>
@@ -465,7 +465,7 @@ export const ClientView = () => {
                       required
                     />
                   </div>
-                  <Button type="submit" className="w-full" disabled={submittingCons}>
+                  <Button type="submit" className="client-action-button client-primary-action w-full" disabled={submittingCons}>
                     {submittingCons ? 'Enviando...' : 'Enviar reporte'}
                   </Button>
                 </form>

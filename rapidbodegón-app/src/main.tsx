@@ -4,7 +4,10 @@ import './theme-overrides.css';
 import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
+import { initializeTheme } from './components/useTheme';
 import './index.css';
+
+initializeTheme();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

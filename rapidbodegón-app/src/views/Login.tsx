@@ -6,17 +6,21 @@ import {
   KeyRound,
   LoaderCircle,
   LogIn,
+  Moon,
   ShieldCheck,
   Store,
+  Sun,
   User as UserIcon,
   UserPlus,
 } from 'lucide-react';
 import { Card, CardContent, Input, Button, Label } from '../components';
+import { useTheme } from '../components/useTheme';
 
 const snackShapes = ['🍿', '🥨', '🍪', '🍫', '🥜', '🍟', '🍩', '🍿', '🥨', '🍪','🍭','🍻'];
 
 export const Login = () => {
   const { login, register } = useApp();
+  const { theme, setTheme } = useTheme();
   const [isRegistering, setIsRegistering] = useState(false);
   const [name, setName] = useState('');
   const [pin, setPin] = useState('');
@@ -85,6 +89,27 @@ export const Login = () => {
       <div className="login-glow login-glow-two" aria-hidden="true" />
 
       <div className="login-content relative z-10 w-full max-w-md">
+        <div className="login-theme-switch" role="group" aria-label="Tema de la aplicación">
+          <button
+            type="button"
+            aria-pressed={theme === 'dark'}
+            className={`login-theme-button ${theme === 'dark' ? 'is-active' : ''}`}
+            onClick={() => setTheme('dark')}
+          >
+            <Moon size={15} aria-hidden="true" />
+            Oscuro
+          </button>
+          <button
+            type="button"
+            aria-pressed={theme === 'light'}
+            className={`login-theme-button ${theme === 'light' ? 'is-active' : ''}`}
+            onClick={() => setTheme('light')}
+          >
+            <Sun size={15} aria-hidden="true" />
+            Claro
+          </button>
+        </div>
+
         <header className="mb-7 text-center sm:mb-8">
           <div className="login-mark-wrap mx-auto mb-5">
             <div className="login-mark">

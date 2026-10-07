@@ -23,6 +23,10 @@ en la versión inicial:
 - Preparación de Cloud Functions (Node 22) para backend server-side, sin
   conectarlas aún al cliente ni desplegarlas en producción.
 - Soporte para temas claro/oscuro, importación de inventario y cierre de ciclos.
+- Selección del tema claro/oscuro disponible desde el inicio de sesión; la
+  preferencia guardada se conserva al entrar en la vista de cliente o admin.
+- El panel administrativo comparte la identidad visual del inicio de sesión y
+  ClientView, con adaptaciones para modo claro, gráficos y estados.
 - Scripts de administración con Firebase Admin SDK para crear usuarios y
   mantener datos sensibles fuera del navegador.
 - Aviso visible de conexión offline y de día de corte para clientes con saldo
@@ -62,6 +66,9 @@ La lógica de negocio central vive en `src/store/AppContext.tsx`; las vistas en
   privacidad.
 - Visualiza precios y productos disponibles, ocultando items sin stock.
 - Puede alternar entre tema claro y oscuro.
+- Elige tema claro u oscuro desde Login; la selección se guarda en el navegador
+  y se mantiene al entrar a ClientView. Si aún no ha elegido, se usa el tema
+  oscuro.
 - La app se comporta como PWA y puede instalarse en el escritorio o móvil.
 - En un día de corte, si mantiene saldo pendiente, ve un aviso con el monto y
   un acceso directo al formulario para reportar el pago.
@@ -218,6 +225,7 @@ npm run analyze
 ### Scripts disponibles
 
 - `npm run dev`: arranque del entorno de desarrollo.
+- En VS Code, ejecuta la tarea `RapidBodegón: Vite dev server` desde el workspace raíz para iniciar Vite en el puerto 5173.
 - `npm run build`: build de producción de la app.
 - `npm run analyze`: genera `dist/stats.html` para revisar tamaño y chunks.
 - `npm run cap:sync`: compila y sincroniza cambios con Capacitor.
@@ -276,6 +284,31 @@ producción.
 - `agent.md` y `.github/copilot-instructions.md`: pautas generales de trabajo.
 - `.github/agents/*.agent.md`: instrucciones de los agentes especializados.
 
+## Tema visual
+
+Login, ClientView y AdminView comparten la paleta de azul profundo con acentos
+ámbar y verde. ClientView y AdminView aplican fondos y estados con variantes
+legibles en tema claro, incluidos textos de saldo, pagos, inventario, alertas y
+errores. AdminView adapta también los ejes, cuadrículas y tooltips de sus
+gráficos.
+
+Al agregar funciones a AdminView, mantenerlas dentro del scope `.admin-view` y
+reutilizar tarjetas y controles compartidos. Usar el acento ámbar para acciones
+principales; reservar verde para confirmar/aprobar y rojo para rechazar o
+errores. Comprobar ambos temas, estados hover/focus/disabled y el contraste de
+textos, formularios y gráficos. Las transiciones de botones respetan
+`prefers-reduced-motion`.
+
+ClientView y AdminView conservan interacciones suaves de foco, hover y pulsación;
+se desactivan las transiciones y transformaciones cuando el dispositivo solicita
+movimiento reducido.
+
+El tema se aplica al iniciar la app a partir de `rb_theme` en `localStorage`,
+antes de renderizar la interfaz para evitar un destello de tema incorrecto. La
+misma preferencia la usan el selector de Login y el toggle de las vistas
+autenticadas. Sin valor guardado o si el almacenamiento no está disponible, el
+tema predeterminado es oscuro.
+
 ## Política obligatoria de documentación
 
 Cada cambio en el repositorio debe actualizar este README en la misma tarea,
@@ -307,6 +340,13 @@ esa comprobación.
 - **2026-10-07:** se establece como requisito actualizar este README ante cada
   cambio del repositorio y comprobar la cobertura documental antes de autorizar
   un commit.
+- **2026-10-07:** se añade selección de tema en Login, se comparte la preferencia
+  `rb_theme` al entrar a ClientView y se alinean sus colores, controles y estados
+  con la paleta del inicio de sesión, con overrides legibles en modo claro y
+  respeto por `prefers-reduced-motion`.
+- **2026-10-07:** se extiende la misma identidad visual a AdminView, incluidos
+  gráficos, controles y estados de modo claro. Se documentan convenciones para
+  que nuevas funciones administrativas mantengan la paleta y accesibilidad.
 
 ## Licencia
 

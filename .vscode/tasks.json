@@ -1,0 +1,22 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "RapidBodegón: Vite dev server",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"rapidbodegón-app",
+				"run",
+				"dev",
+				"--",
+				"--host",
+				"0.0.0.0"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

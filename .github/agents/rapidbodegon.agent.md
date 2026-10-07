@@ -22,8 +22,10 @@ Consulta `rapidbodegón-app/memory.md` cuando necesites contexto de arquitectura
 
 ## Interfaz y tema
 - Reutiliza componentes de `rapidbodegón-app/src/components/` y sigue la estructura de vistas existente.
-- El tema se implementa con `data-theme` y `rapidbodegón-app/src/theme-overrides.css`; no asumas que una clase Tailwind nueva se adapta automáticamente al tema claro.
-- Comprueba contraste de texto, placeholders, inputs y estados visibles en tema claro y oscuro.
+- El tema compartido usa `useTheme.ts` y `data-theme`; antes de agregar controles en `Login`, `ClientView` o `AdminView`, conserva el almacenamiento `rb_theme` y las clases scoped de su vista en `rapidbodegón-app/src/theme-overrides.css`.
+- Login, ClientView y AdminView comparten una identidad de azul profundo con acentos ámbar y verde. Al agregar funcionalidades al AdminView, utiliza las superficies de tarjeta existentes, botones principales ámbar, variantes semánticas verde/rojo para confirmar/rechazar, y estados de foco visibles; evita reintroducir gradientes morados/azules solo decorativos.
+- Toda clase Tailwind nueva debe revisarse en ambos temas; no asumas que se adapta automáticamente al modo claro. Actualiza los overrides de la vista correspondiente y comprueba contraste de textos, placeholders, inputs, gráficos, alertas y estados visibles.
+- Respeta `prefers-reduced-motion` para nuevas animaciones y transiciones.
 
 ## Validación
 - Ejecuta `npm run build` desde `rapidbodegón-app/` para validar la compilación.

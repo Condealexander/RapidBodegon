@@ -34,8 +34,9 @@
 - La app soporta importación de inventario desde `.xlsx`, `.xls` y `.csv` en el panel administrativo.
 
 ## Tema visual
-- `ThemeToggle.tsx` establece `data-theme` en `<html>` y persiste la preferencia en `localStorage`.
-- `main.tsx` importa `theme-overrides.css`; actualmente el tema claro adapta las clases Tailwind existentes mediante overrides CSS.
+- `useTheme.ts` centraliza la preferencia `rb_theme`, la aplica en `data-theme` y la persiste en `localStorage`; `main.tsx` la inicializa antes del primer render. Login permite elegir el tema y `ThemeToggle.tsx` lo cambia en las vistas autenticadas.
+- `main.tsx` importa `theme-overrides.css`; el tema claro adapta las clases Tailwind existentes mediante overrides CSS, incluidos los textos y estados de ClientView y AdminView.
+- Login, ClientView y AdminView comparten una identidad visual de azul profundo con acentos ámbar y verde. AdminView usa estilos scoped `.admin-view` para superficies, botones, inputs, gráficas y feedback en tema claro; mantener esta convención al añadir nuevas funciones administrativas.
 - Al añadir estilos de texto, fondos o controles, comprobar ambos temas y actualizar los overrides necesarios. Los inputs requieren contraste tanto para el texto escrito como para el placeholder.
 - El comportamiento visual debe seguir funcionando tanto en la web PWA como en el empaquetado nativo.
 
