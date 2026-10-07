@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, Input, Button, Label } from '../components';
 
-const snackShapes = ['🍿', '🥨', '🍪', '🍫', '🥜', '🍟', '🍩', '🍿', '🥨', '🍪'];
+const snackShapes = ['🍿', '🥨', '🍪', '🍫', '🥜', '🍟', '🍩', '🍿', '🥨', '🍪','🍭','🍻'];
 
 export const Login = () => {
   const { login, register } = useApp();
@@ -42,15 +42,15 @@ export const Login = () => {
     // longitud para no bloquear a clientes con un PIN anterior más corto.
     if (isRegistering) {
       if (name.trim().split(/\s+/).length < 2) {
-        setError('Escribe tu nombre y apellido !(-.-).');
+        setError('Escribe tu nombre y apellido 🫣.');
         return;
       }
       if (pin.length < 8) {
-        setError('El PIN debe tener al menos 8 dígitos !(-.-).');
+        setError('El PIN debe tener al menos 8 dígitos 🥵 .');
         return;
       }
       if (pin !== confirmPin) {
-        setError('Los PIN no coinciden (o_o¡).');
+        setError('Los PIN no coinciden 😱.');
         return;
       }
     }
@@ -66,7 +66,7 @@ export const Login = () => {
           result.error ||
             (isRegistering
               ? 'No se pudo completar el registro (o_o¡).'
-              : 'Credenciales incorrectas. Verifique su nombre y PIN (0_0).')
+              : 'Credenciales incorrectas. Verifique su nombre y PIN 😬.')
         );
       }
     } finally {
@@ -134,7 +134,7 @@ export const Login = () => {
                     id="name"
                     type="text"
                     autoComplete="username"
-                    placeholder="Ej. JUAN PEREZ"
+                    placeholder="Ej. LA HIJA E MAGALY"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     className="pl-10"
@@ -201,12 +201,12 @@ export const Login = () => {
 
             <p className="login-security-note mt-5">
               <ShieldCheck size={15} aria-hidden="true" />
-              Tu acceso está protegido con PIN
+              Tu acceso está protegido por DIOSITO 😇 y tu PIN secreto. No compartas tu PIN con nadie.
             </p>
           </CardContent>
         </Card>
 
-        <p className="login-footer mt-5 text-center">Rápido, sencillo y hecho para tu bodega.</p>
+        <p className="login-footer mt-5 text-center">Rápido, sencillo y mas Rapido 😎.</p>
       </div>
     </main>
   );
