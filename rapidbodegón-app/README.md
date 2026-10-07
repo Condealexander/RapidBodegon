@@ -81,6 +81,11 @@ desactivado con `ENABLE_CONSUMPTION_REPORT = false` en `src/views/ClientView.tsx
 
 - Revisa el crédito global por cobrar, la recaudación del ciclo actual y el
   estado de clientes.
+- Al seleccionar un cliente desde el directorio, consulta sus consumos
+  completados del ciclo vigente con fecha, producto, cantidad e importe.
+- Registra egresos administrativos en USD con descripción, consulta los últimos
+  50 movimientos y ve el recaudado neto del ciclo y el disponible global
+  acumulado, con su equivalente en Bs. Los egresos no modifican el inventario.
 - Busca clientes por nombre y revisa gráficos de ventas diarias.
 - Registra consumos a crédito. La operación actualiza transacción, saldo del
   cliente y stock mediante una transacción de Firestore.
@@ -167,6 +172,8 @@ Este estado es intencional:
 | `transactions/{id}` | `userId`, `type` (`CONSUMPTION` o `PAYMENT`), `amountUSD`, `date`, `status` (`PENDING`, `COMPLETED` o `REJECTED`), `productId?`, `quantity?`, `reference?` |
 | `config/global` | `exchangeRate`, `cutoffDays`, `bankDetails` |
 | `cycles/{id}` | `periodStart`, `periodEnd`, `totalCollected`, `totalConsumption`, `closedAt` |
+| `expenses/{id}` | `description`, `amountUSD`, `date`, `createdBy`; registros administrativos inmutables |
+| `financials/global` | `initialized`, `totalCollectedUSD`, `totalExpensesUSD`, `updatedAt`; acumulados financieros actualizados junto con pagos aprobados y egresos |
 
 ## Seguridad y limitaciones actuales
 
@@ -174,6 +181,30 @@ Este estado es intencional:
 configuración y ciclos. La documentación refleja el comportamiento que la app
 espera y el estado operativo actual, pero la validación de la interfaz no
 sustituye las reglas de Firestore.
+
+El disponible global se calcula a partir del acumulado persistente de pagos
+aprobados menos egresos, no de la lista del panel que limita el historial de
+transacciones a 1.000 documentos. Antes de habilitar esta versión en un
+proyecto existente, inicializa una sola vez los acumulados con credenciales
+autorizadas de Firebase Admin. Coordina una breve ventana sin aprobaciones:
+publica primero las reglas que exigen la actualización atómica del agregado,
+ejecuta la migración y luego habilita el cliente actualizado.
+
+```bash
+npm run migrate-financials -- --project=rapidbodegon
+```
+
+El script suma todos los pagos completados existentes y egresos ya registrados,
+crea `financials/global` y se niega a sobrescribir un acumulado inicializado.
+Desde entonces, aprobar un pago o registrar un egreso actualiza su movimiento y
+el acumulado correspondiente en una misma transacción de Firestore. Las reglas
+permiten lectura de estos datos solo a ADMIN; los egresos no se pueden editar ni
+borrar desde el cliente.
+
+El neto del ciclo vigente es la suma de pagos completados desde el último corte
+menos los egresos del mismo período. El disponible global es acumulado entre
+ciclos y no se reinicia al corte. En el panel, el historial del cliente lista
+solo sus consumos completados desde el corte vigente.
 
 La inicialización de Firebase App Check está temporalmente desactivada en el
 cliente: la carga de reCAPTCHA fallaba en producción e impedía usar Firestore.
@@ -204,6 +235,7 @@ gcloud auth application-default login
 | `reset-pin.mjs` | Cambiar PIN de un cliente sin tocar perfil ni saldo: `node scripts/reset-pin.mjs "JUAN PEREZ" "nuevoPinDe8Digitos" --project=rapidbodegon` |
 | `seed-data.mjs` | Cargar productos iniciales y `config/global`: `node scripts/seed-data.mjs --project=rapidbodegon` |
 | `import-products.mjs` | Reemplazar productos de prueba `p1` a `p8` con catálogo del script: `node scripts/import-products.mjs --project=rapidbodegon` |
+| `migrate-financials.mjs` | Inicializar una sola vez `financials/global` desde pagos y egresos existentes: `npm run migrate-financials -- --project=rapidbodegon` |
 
 El importador asigna un stock inicial de 100 unidades. Revisa los cambios antes
 de operar y ajusta existencias desde el panel de inventario si se requiere
@@ -347,6 +379,10 @@ esa comprobación.
 - **2026-10-07:** se extiende la misma identidad visual a AdminView, incluidos
   gráficos, controles y estados de modo claro. Se documentan convenciones para
   que nuevas funciones administrativas mantengan la paleta y accesibilidad.
+- **2026-10-07:** AdminView permite revisar consumos completados del cliente en
+  el ciclo vigente y registrar egresos en USD. Los egresos se descuentan del
+  recaudado neto del ciclo y del disponible global acumulado; se agregan el
+  ledger financiero y su inicialización única con Admin SDK.
 
 ## Licencia
 

@@ -9,6 +9,7 @@
     "analyze": "ANALYZE=true vite build",
     "preview": "vite preview",
     "create-admin": "node scripts/create-admin.mjs",
+    "migrate-financials": "node scripts/migrate-financials.mjs",
     "cap:sync": "npm run build && npx cap sync"
   },
   "dependencies": {

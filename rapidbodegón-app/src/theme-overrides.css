@@ -591,7 +591,8 @@
   color: #b91c1c !important;
 }
 
-:root[data-theme='light'] .admin-view .text-emerald-400 {
+:root[data-theme='light'] .admin-view .text-emerald-400,
+:root[data-theme='light'] .admin-view .text-emerald-200\/70 {
   color: #047857 !important;
 }
 
@@ -603,7 +604,8 @@
   color: #854d0e !important;
 }
 
-:root[data-theme='light'] .admin-view .text-amber-400 {
+:root[data-theme='light'] .admin-view .text-amber-400,
+:root[data-theme='light'] .admin-view .text-amber-200\/70 {
   color: #92400e !important;
 }
 

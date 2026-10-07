@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
 import { getNextCutoff, getPreviousCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
@@ -23,19 +23,27 @@ const dayKey = (iso: string) => {
 
 export const AdminView = () => {
   const {
-    users, products, transactions, config, cycles, logout,
+    users, products, transactions, currentCycleTransactions, expenses, currentCycleExpenses,
+    expensesReady, currentCycleExpensesReady, currentCycleTransactionsReady,
+    financialTotals, financialTotalsError, expensesError, currentCycleExpensesError,
+    financialTotalsReady, currentCycleTransactionsError, config, cycles, logout,
     addConsumption, updateExchangeRate, refreshExchangeRateFromSources, approvePayment, rejectPayment,
-    approveConsumption, rejectConsumption,
+    approveConsumption, rejectConsumption, addExpense,
     updateProductStocks, importProducts
   } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const [historyUserId, setHistoryUserId] = useState<string>('');
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [quantity, setQuantity] = useState<number>(1);
   const [newRate, setNewRate] = useState<string>(String(config.exchangeRate ?? ''));
   const [rateMsg, setRateMsg] = useState<string>('');
   const [consumptionError, setConsumptionError] = useState<string>('');
+  const [expenseDescription, setExpenseDescription] = useState('');
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [expenseError, setExpenseError] = useState('');
+  const expenseSubmissionRef = useRef(false);
 
   const [actionError, setActionError] = useState<string>('');
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -87,7 +95,6 @@ export const AdminView = () => {
   const cycleStart = getPreviousCutoff();
   const cycleStartTimestamp = cycleStart.getTime();
   const analytics = useMemo(() => {
-    let currentCyclePayments = 0;
     const pendingPayments: typeof transactions = [];
     const pendingConsumptions: typeof transactions = [];
     const dailySalesMap: Record<string, number> = {};
@@ -96,12 +103,6 @@ export const AdminView = () => {
     for (const transaction of transactions) {
       if (transaction.type === 'PAYMENT') {
         if (transaction.status === 'PENDING') pendingPayments.push(transaction);
-        if (
-          transaction.status === 'COMPLETED' &&
-          new Date(transaction.date).getTime() >= cycleStartTimestamp
-        ) {
-          currentCyclePayments += transaction.amountUSD;
-        }
       } else if (transaction.type === 'CONSUMPTION') {
         if (transaction.status === 'PENDING') {
           pendingConsumptions.push(transaction);
@@ -133,20 +134,41 @@ export const AdminView = () => {
     }).sort((a, b) => b.total - a.total).slice(0, 5);
 
     return {
-      currentCyclePayments,
       pendingPayments,
       pendingConsumptions,
       dailySalesData,
       clientSalesData
     };
-  }, [transactions, cycleStartTimestamp, usersById]);
+  }, [transactions, usersById]);
   const {
-    currentCyclePayments,
     pendingPayments,
     pendingConsumptions,
     dailySalesData,
     clientSalesData
   } = analytics;
+  const currentCyclePayments = useMemo(() => currentCycleTransactions
+    .filter(transaction => transaction.type === 'PAYMENT' && transaction.status === 'COMPLETED')
+    .reduce((total, transaction) => total + transaction.amountUSD, 0),
+  [currentCycleTransactions]);
+  const currentCycleExpensesUSD = useMemo(
+    () => currentCycleExpenses.reduce((total, expense) => total + expense.amountUSD, 0),
+    [currentCycleExpenses]
+  );
+  const currentCycleNet = currentCyclePayments - currentCycleExpensesUSD;
+  const globalAvailable = financialTotals?.initialized
+    ? financialTotals.totalCollectedUSD - financialTotals.totalExpensesUSD
+    : null;
+  const clientCycleConsumptions = useMemo(() => currentCycleTransactions
+    .filter(transaction =>
+      transaction.userId === historyUserId
+      && transaction.type === 'CONSUMPTION'
+      && transaction.status === 'COMPLETED'
+    )
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+  [currentCycleTransactions, historyUserId]);
+  const selectedHistoryClient = usersById.get(historyUserId);
+  const clientCycleConsumptionTotal = clientCycleConsumptions
+    .reduce((total, transaction) => total + transaction.amountUSD, 0);
 
   const runAction = async (id: string, fn: () => Promise<ActionResult>) => {
     if (busyId) return;
@@ -174,6 +196,32 @@ export const AdminView = () => {
       setSelectedUserId('');
       setSelectedProductId('');
       setQuantity(1);
+    }
+  };
+
+  const handleAddExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setExpenseError('');
+    const amount = expenseAmount.trim() ? Number(expenseAmount) : NaN;
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setExpenseError('Ingresa un monto válido mayor a cero.');
+      return;
+    }
+    if (busyId || expenseSubmissionRef.current) return;
+
+    expenseSubmissionRef.current = true;
+    setBusyId('expense-add');
+    try {
+      const result = await addExpense(expenseDescription, amount);
+      if (!result.success) {
+        setExpenseError(result.error || 'No se pudo registrar el egreso.');
+        return;
+      }
+      setExpenseDescription('');
+      setExpenseAmount('');
+    } finally {
+      expenseSubmissionRef.current = false;
+      setBusyId(null);
     }
   };
 
@@ -331,7 +379,7 @@ export const AdminView = () => {
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
         <Card className="bg-gradient-to-br from-blue-900/50 to-slate-800 border-blue-500/20">
           <CardContent className="p-5 flex items-center gap-4">
             <div className="p-3 bg-blue-500/20 text-blue-400 rounded-lg">
@@ -353,9 +401,45 @@ export const AdminView = () => {
               <DollarSign size={24} />
             </div>
             <div>
-              <p className="text-sm text-emerald-200/70 font-medium">Recaudado (Ciclo Actual)</p>
-              <h2 className="text-2xl font-bold text-white">{formatCurrency(currentCyclePayments)}</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Desde el {formatCutoffDate(cycleStart)}</p>
+              <p className="text-sm text-emerald-200/70 font-medium">Disponible del Ciclo Actual</p>
+              {currentCycleTransactionsError || currentCycleExpensesError ? (
+                <p role="alert" className="text-xs text-red-400">No se pudo cargar el total del ciclo.</p>
+              ) : !currentCycleTransactionsReady || !currentCycleExpensesReady ? (
+                <p className="text-sm text-slate-400">Cargando...</p>
+              ) : (
+                <>
+                  <h2 className="text-2xl font-bold text-white">{formatCurrency(currentCycleNet)}</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Recaudado {formatCurrency(currentCyclePayments)} · Egresos {formatCurrency(currentCycleExpensesUSD)}
+                  </p>
+                  <p className="text-xs text-slate-400 font-mono">{formatBs(currentCycleNet, config.exchangeRate)}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Desde el {formatCutoffDate(cycleStart)}</p>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-br from-amber-900/50 to-slate-800 border-amber-500/20">
+          <CardContent className="p-5 flex items-center gap-4">
+            <div className="p-3 bg-amber-500/20 text-amber-400 rounded-lg">
+              <Wallet size={24} />
+            </div>
+            <div>
+              <p className="text-sm text-amber-200/70 font-medium">Disponible Global</p>
+              {financialTotalsError ? (
+                <p role="alert" className="text-xs text-red-400">No se pudo cargar la cuenta global.</p>
+              ) : !financialTotalsReady ? (
+                <p className="text-sm text-slate-400">Cargando...</p>
+              ) : globalAvailable === null ? (
+                <p className="text-sm font-medium text-amber-400">Inicialización pendiente</p>
+              ) : (
+                <>
+                  <h2 className="text-2xl font-bold text-white">{formatCurrency(globalAvailable)}</h2>
+                  <p className="text-xs text-slate-400 font-mono">{formatBs(globalAvailable, config.exchangeRate)}</p>
+                </>
+              )}
+              <p className="text-xs text-slate-500 mt-0.5">Acumulado de pagos menos egresos</p>
             </div>
           </CardContent>
         </Card>
@@ -606,9 +690,12 @@ export const AdminView = () => {
                           <Button
                             variant="secondary"
                             className="px-2 py-1 text-xs h-auto"
-                            onClick={() => setSelectedUserId(client.id)}
+                            onClick={() => {
+                              setSelectedUserId(client.id);
+                              setHistoryUserId(client.id);
+                            }}
                           >
-                            <Plus size={14} className="mr-1" /> Cargar
+                            <Plus size={14} className="mr-1" /> Ver / cargar
                           </Button>
                         </td>
                       </tr>
@@ -621,6 +708,53 @@ export const AdminView = () => {
                   </div>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Consumos del Ciclo Actual"
+              subtitle={selectedHistoryClient
+                ? `${selectedHistoryClient.name} · desde el ${formatCutoffDate(cycleStart)}`
+                : 'Selecciona “Ver / cargar” en un cliente para consultar su historial'}
+            />
+            <CardContent className="p-0">
+              {!selectedHistoryClient ? (
+                <p className="p-5 text-sm text-slate-500">No hay un cliente seleccionado.</p>
+              ) : currentCycleTransactionsError ? (
+                <p role="alert" className="p-5 text-sm text-red-400">No se pudo cargar el historial de consumos.</p>
+              ) : !currentCycleTransactionsReady ? (
+                <p className="p-5 text-sm text-slate-400">Cargando historial...</p>
+              ) : clientCycleConsumptions.length === 0 ? (
+                <p className="p-5 text-sm text-slate-500">Este cliente no tiene consumos completados en el ciclo actual.</p>
+              ) : (
+                <>
+                  <div className="px-5 py-3 flex justify-between text-sm border-b border-slate-700/50">
+                    <span className="text-slate-400">{clientCycleConsumptions.length} consumo(s)</span>
+                    <span className="font-semibold text-blue-400">{formatCurrency(clientCycleConsumptionTotal)}</span>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto divide-y divide-slate-700/50">
+                    {clientCycleConsumptions.map(transaction => {
+                      const product = transaction.productId
+                        ? productsById.get(transaction.productId)
+                        : undefined;
+                      return (
+                        <div key={transaction.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-slate-200">
+                              {product?.name || 'Producto no disponible'} × {transaction.quantity ?? 0}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {new Date(transaction.date).toLocaleString('es-VE')}
+                            </p>
+                          </div>
+                          <span className="text-sm font-mono text-blue-400">{formatCurrency(transaction.amountUSD)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -768,7 +902,10 @@ export const AdminView = () => {
                   <select
                     className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     value={selectedUserId}
-                    onChange={(e) => setSelectedUserId(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedUserId(e.target.value);
+                      setHistoryUserId(e.target.value);
+                    }}
                     required
                   >
                     <option value="">Seleccione un cliente...</option>
@@ -810,6 +947,85 @@ export const AdminView = () => {
                   Registrar Consumo
                 </Button>
               </form>
+            </CardContent>
+          </Card>
+
+          <Card className="border-amber-500/20">
+            <CardHeader title="Registrar Egreso" subtitle="Reposición u otros gastos del negocio (USD)" />
+            <CardContent>
+              {!financialTotalsReady || globalAvailable === null ? (
+                <p className="mb-4 rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-sm text-amber-400">
+                  {financialTotalsError
+                    ? 'No se pudo cargar la cuenta global.'
+                    : !financialTotalsReady
+                      ? 'Cargando cuenta global...'
+                      : 'Inicializa la cuenta global antes de registrar egresos.'}
+                </p>
+              ) : null}
+              <form onSubmit={handleAddExpense} className="space-y-4">
+                {expenseError && (
+                  <p role="alert" className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">
+                    {expenseError}
+                  </p>
+                )}
+                <div>
+                  <Label htmlFor="expense-description">Descripción</Label>
+                  <Input
+                    id="expense-description"
+                    value={expenseDescription}
+                    onChange={event => setExpenseDescription(event.target.value)}
+                    maxLength={160}
+                    placeholder="Ej. Reposición de chucherías"
+                    required
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="expense-amount">Monto (USD)</Label>
+                  <Input
+                    id="expense-amount"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={expenseAmount}
+                    onChange={event => setExpenseAmount(event.target.value)}
+                    required
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={busyId !== null || !financialTotalsReady || globalAvailable === null || Boolean(financialTotalsError)}
+                >
+                  {busyId === 'expense-add' ? 'Registrando...' : 'Registrar Egreso'}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader title="Egresos Recientes" subtitle="Últimos 50 movimientos registrados" />
+            <CardContent className="p-0">
+              {expensesError ? (
+                <p role="alert" className="p-5 text-sm text-red-400">No se pudo cargar el historial de egresos.</p>
+              ) : !expensesReady ? (
+                <p className="p-5 text-sm text-slate-400">Cargando egresos...</p>
+              ) : expenses.length === 0 ? (
+                <p className="p-5 text-sm text-slate-500">Todavía no hay egresos registrados.</p>
+              ) : (
+                <div className="max-h-80 overflow-y-auto divide-y divide-slate-700/50">
+                  {expenses.map(expense => (
+                    <div key={expense.id} className="px-5 py-3 flex justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-200">{expense.description}</p>
+                        <p className="text-xs text-slate-500">
+                          {new Date(expense.date).toLocaleString('es-VE')}
+                        </p>
+                      </div>
+                      <span className="text-sm font-mono text-red-400">−{formatCurrency(expense.amountUSD)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 

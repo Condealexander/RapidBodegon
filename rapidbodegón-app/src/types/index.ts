@@ -39,6 +39,21 @@ export interface Transaction {
   reviewReasons?: string[];
 }
 
+export interface Expense {
+  id: string;
+  description: string;
+  amountUSD: number;
+  date: string;
+  createdBy: string;
+}
+
+export interface FinancialTotals {
+  initialized: boolean;
+  totalCollectedUSD: number;
+  totalExpensesUSD: number;
+  updatedAt: string;
+}
+
 export interface AppConfig {
   exchangeRate: number; // Bs per USD
   exchangeRateSource?: string;

@@ -77,7 +77,20 @@ service cloud.firestore {
             && request.resource.data.quantity <= 50)
         ));
 
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin()
+        && (
+          resource.data.type != 'PAYMENT'
+          || resource.data.status != 'PENDING'
+          || request.resource.data.status != 'COMPLETED'
+          || (
+            request.resource.data.amountUSD == resource.data.amountUSD
+            && get(/databases/$(database)/documents/financials/global).data.initialized == true
+            && getAfter(/databases/$(database)/documents/financials/global).data.totalCollectedUSD
+              == get(/databases/$(database)/documents/financials/global).data.totalCollectedUSD
+                + resource.data.amountUSD
+          )
+        );
+      allow delete: if isAdmin();
     }
 
     // --- config ---
@@ -90,6 +103,47 @@ service cloud.firestore {
     match /cycles/{cycleId} {
       allow read: if isAdmin();
       allow write: if isAdmin();
+    }
+
+    // --- expenses (registro financiero administrativo, sin cambios de stock) ---
+    match /expenses/{expenseId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'id', 'description', 'amountUSD', 'date', 'createdBy'
+        ])
+        && request.resource.data.id == expenseId
+        && request.resource.data.description is string
+        && request.resource.data.description.size() > 0
+        && request.resource.data.description.size() <= 160
+        && request.resource.data.amountUSD is number
+        && request.resource.data.amountUSD > 0
+        && request.resource.data.date is string
+        && request.resource.data.createdBy == request.auth.uid
+        && get(/databases/$(database)/documents/financials/global).data.initialized == true
+        && getAfter(/databases/$(database)/documents/financials/global).data.totalExpensesUSD
+          == get(/databases/$(database)/documents/financials/global).data.totalExpensesUSD
+            + request.resource.data.amountUSD;
+      allow update, delete: if false;
+    }
+
+    // The aggregate is initialized only by the Admin SDK migration script.
+    // Admin client transactions may only increase the appropriate totals.
+    match /financials/{financialId} {
+      allow read: if isAdmin() && financialId == 'global';
+      allow create, delete: if false;
+      allow update: if isAdmin()
+        && financialId == 'global'
+        && resource.data.initialized == true
+        && request.resource.data.initialized == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'totalCollectedUSD', 'totalExpensesUSD', 'updatedAt'
+        ])
+        && request.resource.data.totalCollectedUSD is number
+        && request.resource.data.totalCollectedUSD >= resource.data.totalCollectedUSD
+        && request.resource.data.totalExpensesUSD is number
+        && request.resource.data.totalExpensesUSD >= resource.data.totalExpensesUSD
+        && request.resource.data.updatedAt is string;
     }
 
     // Deny everything else by default (no more `allow read, write: if true`).

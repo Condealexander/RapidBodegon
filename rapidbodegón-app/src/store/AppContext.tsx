@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from 'react';
-import { User, Product, Transaction, AppConfig } from '../types';
+import { User, Product, Transaction, AppConfig, Expense, FinancialTotals } from '../types';
 import { mockProducts, mockConfig, mockTransactions } from '../data/mock';
 import { db, auth } from '../firebase';
 import {
@@ -14,7 +14,7 @@ import {
   User as FirebaseAuthUser,
   UserCredential
 } from 'firebase/auth';
-import { listPastUnclosedCycles } from '../utils/cycle';
+import { getPreviousCutoff, listPastUnclosedCycles } from '../utils/cycle';
 
 interface RegisterResult {
   success: boolean;
@@ -74,6 +74,18 @@ interface AppContextType {
   users: User[];
   products: Product[];
   transactions: Transaction[];
+  currentCycleTransactions: Transaction[];
+  expenses: Expense[];
+  currentCycleExpenses: Expense[];
+  expensesReady: boolean;
+  currentCycleExpensesReady: boolean;
+  financialTotals: FinancialTotals | null;
+  financialTotalsReady: boolean;
+  financialTotalsError: string | null;
+  expensesError: string | null;
+  currentCycleExpensesError: string | null;
+  currentCycleTransactionsError: string | null;
+  currentCycleTransactionsReady: boolean;
   config: AppConfig;
   cycles: Cycle[];
   login: (name: string, pin: string) => Promise<RegisterResult>;
@@ -86,6 +98,7 @@ interface AppContextType {
   reportPayment: (userId: string, amountUSD: number, reference: string) => Promise<RegisterResult>;
   approvePayment: (transactionId: string) => Promise<RegisterResult>;
   rejectPayment: (transactionId: string) => Promise<RegisterResult>;
+  addExpense: (description: string, amountUSD: number) => Promise<RegisterResult>;
   updateExchangeRate: (rate: number) => Promise<RegisterResult>;
   refreshExchangeRateFromSources: () => Promise<ExchangeRateRefreshResult>;
   updateProductStocks: (stocks: Array<{ productId: string; stock: number }>) => Promise<RegisterResult>;
@@ -110,10 +123,23 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [products, setProducts] = useState<Product[]>(mockProducts);
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
+  const [currentCycleTransactions, setCurrentCycleTransactions] = useState<Transaction[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [currentCycleExpenses, setCurrentCycleExpenses] = useState<Expense[]>([]);
+  const [expensesReady, setExpensesReady] = useState(false);
+  const [currentCycleExpensesReady, setCurrentCycleExpensesReady] = useState(false);
+  const [financialTotals, setFinancialTotals] = useState<FinancialTotals | null>(null);
+  const [financialTotalsReady, setFinancialTotalsReady] = useState(false);
+  const [financialTotalsError, setFinancialTotalsError] = useState<string | null>(null);
+  const [expensesError, setExpensesError] = useState<string | null>(null);
+  const [currentCycleExpensesError, setCurrentCycleExpensesError] = useState<string | null>(null);
+  const [currentCycleTransactionsError, setCurrentCycleTransactionsError] = useState<string | null>(null);
+  const [currentCycleTransactionsReady, setCurrentCycleTransactionsReady] = useState(false);
   const [config, setConfig] = useState<AppConfig>(mockConfig);
   const [cycles, setCycles] = useState<Cycle[]>([]);
   const [transactionsReady, setTransactionsReady] = useState(false);
   const [cyclesReady, setCyclesReady] = useState(false);
+  const currentCycleStartISO = getPreviousCutoff().toISOString();
 
   const registeringRef = useRef(false);
   // Evita lanzar el cierre de ciclos más de una vez por sesión.
@@ -217,6 +243,86 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     return () => unsub();
   }, [authReady, currentUser?.id]);
 
+  // Financial ledger: the aggregate is initialized once by the Admin SDK
+  // migration script, then updated atomically with each payment/expense.
+  useEffect(() => {
+    if (!authReady || !currentUser || currentUser.role !== 'ADMIN') {
+      setExpenses([]);
+      setCurrentCycleExpenses([]);
+      setExpensesReady(false);
+      setCurrentCycleExpensesReady(false);
+      setFinancialTotals(null);
+      setFinancialTotalsReady(false);
+      setFinancialTotalsError(null);
+      setExpensesError(null);
+      setCurrentCycleExpensesError(null);
+      return;
+    }
+
+    setFinancialTotals(null);
+    setExpenses([]);
+    setCurrentCycleExpenses([]);
+    setExpensesReady(false);
+    setCurrentCycleExpensesReady(false);
+    setFinancialTotalsReady(false);
+    setFinancialTotalsError(null);
+    setExpensesError(null);
+    setCurrentCycleExpensesError(null);
+    const financialRef = doc(db, 'financials', 'global');
+    const unsubFinancial = onSnapshot(
+      financialRef,
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        setFinancialTotals(snapshot.exists() ? snapshot.data() as FinancialTotals : null);
+        setFinancialTotalsError(null);
+        if (!snapshot.metadata.fromCache) setFinancialTotalsReady(true);
+      },
+      (error) => {
+        console.warn('Firestore financial totals listener warning:', error);
+        setFinancialTotalsError(error.message);
+      }
+    );
+
+    const expensesCol = collection(db, 'expenses');
+    const unsubExpenses = onSnapshot(
+      query(expensesCol, orderBy('date', 'desc'), limit(50)),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        const list: Expense[] = [];
+        snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Expense));
+        setExpenses(list);
+        setExpensesError(null);
+        if (!snapshot.metadata.fromCache) setExpensesReady(true);
+      },
+      (error) => {
+        console.warn('Firestore expenses listener warning:', error);
+        setExpensesError(error.message);
+      }
+    );
+
+    const unsubCurrentCycleExpenses = onSnapshot(
+      query(expensesCol, where('date', '>=', currentCycleStartISO)),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        const list: Expense[] = [];
+        snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Expense));
+        setCurrentCycleExpenses(list);
+        setCurrentCycleExpensesError(null);
+        if (!snapshot.metadata.fromCache) setCurrentCycleExpensesReady(true);
+      },
+      (error) => {
+        console.warn('Firestore current-cycle expenses listener warning:', error);
+        setCurrentCycleExpensesError(error.message);
+      }
+    );
+
+    return () => {
+      unsubFinancial();
+      unsubExpenses();
+      unsubCurrentCycleExpenses();
+    };
+  }, [authReady, currentUser?.id, currentUser?.role, currentCycleStartISO]);
+
   // Transactions
   useEffect(() => {
     if (!authReady || !currentUser) {
@@ -244,6 +350,37 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     );
     return () => unsub();
   }, [authReady, currentUser?.id, currentUser?.role]);
+
+  // Keep all current-cycle movements available independently of the bounded
+  // transaction history used by the rest of the admin dashboard.
+  useEffect(() => {
+    if (!authReady || currentUser?.role !== 'ADMIN') {
+      setCurrentCycleTransactions([]);
+      setCurrentCycleTransactionsError(null);
+      setCurrentCycleTransactionsReady(false);
+      return;
+    }
+    setCurrentCycleTransactions([]);
+    setCurrentCycleTransactionsError(null);
+    setCurrentCycleTransactionsReady(false);
+    const txCol = collection(db, 'transactions');
+    const unsub = onSnapshot(
+      query(txCol, where('date', '>=', currentCycleStartISO)),
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        const list: Transaction[] = [];
+        snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Transaction));
+        setCurrentCycleTransactions(list);
+        setCurrentCycleTransactionsError(null);
+        if (!snapshot.metadata.fromCache) setCurrentCycleTransactionsReady(true);
+      },
+      (error) => {
+        console.warn('Firestore current-cycle transactions listener warning:', error);
+        setCurrentCycleTransactionsError(error.message);
+      }
+    );
+    return () => unsub();
+  }, [authReady, currentUser?.id, currentUser?.role, currentCycleStartISO]);
 
   // Config
   useEffect(() => {
@@ -355,6 +492,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     await signOut(auth);
     setUsers([]);
     setTransactions([]);
+    setCurrentCycleTransactions([]);
+    setExpenses([]);
+    setCurrentCycleExpenses([]);
+    setExpensesReady(false);
+    setCurrentCycleExpensesReady(false);
+    setFinancialTotals(null);
+    setFinancialTotalsReady(false);
+    setFinancialTotalsError(null);
+    setExpensesError(null);
+    setCurrentCycleExpensesError(null);
+    setCurrentCycleTransactionsError(null);
+    setCurrentCycleTransactionsReady(false);
     setCycles([]);
     cycleCloseAttemptedRef.current = false;
   };
@@ -494,6 +643,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   const approvePayment = async (transactionId: string): Promise<RegisterResult> => {
     const txRef = doc(db, 'transactions', transactionId);
+    const financialRef = doc(db, 'financials', 'global');
     try {
       await runTransaction(db, async (transaction) => {
         const txSnap = await transaction.get(txRef);
@@ -502,8 +652,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         if (tx.type !== 'PAYMENT' || tx.status !== 'PENDING') {
           throw new Error('Ese pago ya fue procesado.');
         }
+        const financialSnap = await transaction.get(financialRef);
+        if (!financialSnap.exists() || financialSnap.get('initialized') !== true) {
+          throw new Error('La cuenta global aún no está inicializada. Ejecuta el script de inicialización financiera antes de aprobar pagos.');
+        }
         transaction.update(txRef, { status: 'COMPLETED' });
         transaction.update(doc(db, 'users', tx.userId), { balanceUSD: increment(-tx.amountUSD) });
+        transaction.update(financialRef, {
+          totalCollectedUSD: increment(tx.amountUSD),
+          updatedAt: new Date().toISOString(),
+        });
       });
       return { success: true };
     } catch (e: any) {
@@ -526,6 +684,48 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       return { success: true };
     } catch (e: any) {
       return { success: false, error: e?.message || 'No se pudo rechazar el pago. Intenta de nuevo.' };
+    }
+  };
+
+  const addExpense = async (description: string, amountUSD: number): Promise<RegisterResult> => {
+    if (currentUser?.role !== 'ADMIN') {
+      return { success: false, error: 'Se requieren permisos de administrador.' };
+    }
+    const cleanDescription = description.trim();
+    const roundedAmount = Math.round(amountUSD * 100) / 100;
+    if (!cleanDescription || cleanDescription.length > 160) {
+      return { success: false, error: 'La descripción debe tener entre 1 y 160 caracteres.' };
+    }
+    if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
+      return { success: false, error: 'El monto debe ser mayor a cero.' };
+    }
+
+    const expenseRef = doc(collection(db, 'expenses'));
+    const financialRef = doc(db, 'financials', 'global');
+    const expense: Expense = {
+      id: expenseRef.id,
+      description: cleanDescription,
+      amountUSD: roundedAmount,
+      date: new Date().toISOString(),
+      createdBy: currentUser.id,
+    };
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const financialSnap = await transaction.get(financialRef);
+        if (!financialSnap.exists() || financialSnap.get('initialized') !== true) {
+          throw new Error('La cuenta global aún no está inicializada. Ejecuta el script de inicialización financiera antes de registrar egresos.');
+        }
+        transaction.set(expenseRef, expense);
+        transaction.update(financialRef, {
+          totalExpensesUSD: increment(roundedAmount),
+          updatedAt: expense.date,
+        });
+      });
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo registrar el egreso.';
+      return { success: false, error: message };
     }
   };
 
@@ -696,6 +896,18 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     users,
     products,
     transactions,
+    currentCycleTransactions,
+    expenses,
+    currentCycleExpenses,
+    expensesReady,
+    currentCycleExpensesReady,
+    financialTotals,
+    financialTotalsReady,
+    financialTotalsError,
+    expensesError,
+    currentCycleExpensesError,
+    currentCycleTransactionsError,
+    currentCycleTransactionsReady,
     config,
     cycles,
     login,
@@ -708,6 +920,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     reportPayment,
     approvePayment,
     rejectPayment,
+    addExpense,
     updateExchangeRate,
     refreshExchangeRateFromSources,
     updateProductStocks,
