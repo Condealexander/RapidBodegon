@@ -8,6 +8,8 @@ Estas instrucciones aplican a cualquier agente que modifique este repositorio (C
 - Localiza el componente, función o regla que realmente controla el comportamiento y revisa sus llamadas y tipos cercanos.
 - Mantén los cambios acotados y respeta las APIs y convenciones existentes.
 - Trata `rapidbodegón-app/README.md` como orientación y confirma en el código si una función o pendiente sigue vigente.
+- Es obligatorio actualizar `rapidbodegón-app/README.md` en la misma tarea por cada cambio del repositorio, lo haga una persona o un agente. Documenta los cambios funcionales en su sección y registra los cambios técnicos, de mantenimiento o de agentes en el historial, sin inventar efectos de producto.
+- Antes de solicitar o dar autorización para crear un commit, revisa el diff completo y valida explícitamente si el README ya documenta cada cambio o si hacen falta entradas nuevas (en especial para funciones, flujos y validaciones). Actualiza primero lo que falte y no crees el commit hasta cerrar esta comprobación.
 
 ## Reglas del dominio
 - No debilites `rapidbodegón-app/firestore.rules` para resolver problemas de UI o permisos.

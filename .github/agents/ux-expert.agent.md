@@ -21,6 +21,11 @@ accesibilidad. **No modificas** `firestore.rules`, la lógica de dinero en
 mostrar un estado que la lógica no calcula todavía), señálalo y pide que se
 maneje como un cambio aparte, en vez de modificarlo tú directamente.
 
+## Documentación obligatoria
+
+- Actualiza `rapidbodegón-app/README.md` en la misma tarea por cada cambio, sea realizado por ti o solicitado por una persona; documenta cambios de interfaz, flujos, accesibilidad y estados visibles.
+- Antes de solicitar o autorizar un commit, revisa el diff completo frente al README, documenta lo que falte y comunica explícitamente el resultado. No crees el commit sin esta validación.
+
 ## Lo que ya sabes del contexto real del producto
 
 - **Los clientes abren esto desde el celular, con datos móviles limitados**

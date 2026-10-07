@@ -14,13 +14,19 @@ en la versión inicial:
 
 - PWA instalable con soporte offline y actualización automática.
 - Empaquetado nativo para Android e iOS con Capacitor.
-- Carga diferida del panel administrativo y de XLSX hasta solicitar una importación;
-  Firebase conserva chunks separados y la PWA precarga recursos para uso offline.
+- Carga diferida de las vistas de cliente y administración; gráficos y XLSX se
+  descargan con el panel, y XLSX solo al solicitar una importación.
+- Registro del service worker después de la carga inicial de la página para
+  reducir trabajo durante el arranque, manteniendo la precarga PWA para uso offline.
+- Actualización diaria de la tasa de cobro desde DolarApi al abrir el panel
+  administrativo, con opción de ajuste manual y registro de origen/hora.
 - Preparación de Cloud Functions (Node 22) para backend server-side, sin
   conectarlas aún al cliente ni desplegarlas en producción.
 - Soporte para temas claro/oscuro, importación de inventario y cierre de ciclos.
 - Scripts de administración con Firebase Admin SDK para crear usuarios y
   mantener datos sensibles fuera del navegador.
+- Aviso visible de conexión offline y de día de corte para clientes con saldo
+  pendiente; el inicio incluye una animación temática de productos de bodega.
 
 ## Stack
 
@@ -49,12 +55,17 @@ La lógica de negocio central vive en `src/store/AppContext.tsx`; las vistas en
 - Consulta datos bancarios de pago móvil/transferencia, con copia individual o
   copia masiva de todos los campos relevantes.
 - Reporta pagos con monto y referencia; esos reportes quedan `PENDING` hasta
-  su aprobación por parte del administrador.
+  su aprobación por parte del administrador. La referencia acepta de 4 a 6
+  dígitos y no se puede reutilizar mientras otro reporte con esa referencia no
+  esté rechazado.
 - Consulta historial de pagos y consumos, y recibe onboarding y aviso de
   privacidad.
 - Visualiza precios y productos disponibles, ocultando items sin stock.
 - Puede alternar entre tema claro y oscuro.
 - La app se comporta como PWA y puede instalarse en el escritorio o móvil.
+- En un día de corte, si mantiene saldo pendiente, ve un aviso con el monto y
+  un acceso directo al formulario para reportar el pago.
+- Si el navegador informa que no hay conexión, ve un aviso de modo offline.
 
 El flujo para reportar consumo propio existe en código, pero hoy está
 desactivado con `ENABLE_CONSUMPTION_REPORT = false` en `src/views/ClientView.tsx`.
@@ -70,8 +81,13 @@ desactivado con `ENABLE_CONSUMPTION_REPORT = false` en `src/views/ClientView.tsx
 - Ajusta varios stocks manualmente y guarda los cambios juntos con un solo
   botón, o importa `.xlsx`, `.xls` y `.csv` con columnas `PRODUCTO` y `STOCK`,
   y una columna opcional `PRECIO`.
-- Actualiza la tasa de cambio, revisa histórico de ciclos y cierra períodos de
-  cobro.
+- La tasa se consulta automáticamente como máximo una vez por día de Venezuela
+  al abrir el panel. Se usa el promedio de las tasas oficial y paralela de
+  DolarApi cuando ambas están disponibles; si solo hay una, se usa esa. El
+  administrador también puede actualizarla manualmente. La pantalla muestra
+  origen y hora de la última actualización; si falla la consulta automática, se
+  conserva la tasa guardada.
+- Revisa el histórico de ciclos y cierra períodos de cobro.
 - Puede cambiar el tema visual y operar desde la misma experiencia web o la
   versión instalada como app.
 
@@ -94,10 +110,14 @@ al encontrar uno ya cerrado.
 
 - `vite-plugin-pwa` configura la app como instalable y con actualización
   automática.
+- El registro del service worker se difiere hasta que termina la carga inicial
+  de la página, con una espera breve adicional.
 - Se registra un service worker con cache de recursos estáticos y cache Network
   First para llamadas de Firebase.
 - La aplicación se puede instalar en escritorio y dispositivos móviles sin usar
   un store.
+- Las vistas de cliente y administración se cargan bajo demanda. Los chunks
+  diferidos siguen incluidos en la precarga offline del service worker.
 
 ### Capacitor
 
@@ -147,6 +167,11 @@ Este estado es intencional:
 configuración y ciclos. La documentación refleja el comportamiento que la app
 espera y el estado operativo actual, pero la validación de la interfaz no
 sustituye las reglas de Firestore.
+
+La inicialización de Firebase App Check está temporalmente desactivada en el
+cliente: la carga de reCAPTCHA fallaba en producción e impedía usar Firestore.
+App Check no está actualmente en modo `Enforced`; antes de habilitarlo o
+endurecerlo, hay que corregir y verificar su inicialización en producción.
 
 Antes de confiar en producción:
 
@@ -248,7 +273,40 @@ producción.
 ## Documentación adicional
 
 - `memory.md`: contexto técnico, stack y arquitectura del repositorio.
-- `agent.md`: pautas internas de trabajo para futuras modificaciones.
+- `agent.md` y `.github/copilot-instructions.md`: pautas generales de trabajo.
+- `.github/agents/*.agent.md`: instrucciones de los agentes especializados.
+
+## Política obligatoria de documentación
+
+Cada cambio en el repositorio debe actualizar este README en la misma tarea,
+tanto si lo realiza una persona como si lo realiza un agente. Esto incluye
+cambios de funcionalidad, interfaz, reglas, datos, scripts, dependencias,
+configuración y pautas de agentes. Documenta el comportamiento nuevo en la
+sección correspondiente y registra también los cambios de mantenimiento o de
+agentes que no alteren la aplicación, sin atribuirles efectos funcionales.
+
+Antes de solicitar o dar autorización para crear un commit, revisa el diff
+completo contra este README. Toda función nueva, cambio de flujo, validación,
+operación o limitación debe estar descrita donde corresponda; si falta, actualiza
+el README primero. La revisión de commit debe indicar explícitamente si la
+documentación ya cubre el cambio o qué se añadió. No crear el commit sin cerrar
+esa comprobación.
+
+## Historial de actualizaciones recientes
+
+- **2026-10-06:** se agregó la actualización diaria de la tasa desde DolarApi
+  (promedio oficial/paralelo cuando ambas fuentes están disponibles), el aviso
+  de día de corte con saldo pendiente y los controles de formato y duplicados
+  para referencias de pago; también se difirió la carga de vistas y del service
+  worker. App Check quedó temporalmente desactivado porque reCAPTCHA bloqueaba
+  Firestore en producción.
+- **2026-10-06 a 2026-10-07:** se mejoró la presentación de inicio de sesión con
+  animación temática y se ajustó el texto de sus mensajes. También se añadió el
+  agente especializado UX Expert y se incorporó su alcance a la documentación
+  de agentes.
+- **2026-10-07:** se establece como requisito actualizar este README ante cada
+  cambio del repositorio y comprobar la cobertura documental antes de autorizar
+  un commit.
 
 ## Licencia
 

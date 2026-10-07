@@ -10,6 +10,8 @@ Estas pautas documentan cómo realizar cambios en RapidBodegón. Para detalles d
 - Localizar el componente, función o regla que realmente controla el comportamiento y revisar sus llamadas y tipos cercanos.
 - Mantener los cambios acotados y respetar las APIs y convenciones ya existentes.
 - Tratar `README.md` como orientación; confirmar en el código si una función o pendiente sigue vigente.
+- Actualizar obligatoriamente `README.md` en la misma tarea por cada cambio del repositorio, lo haga una persona o un agente. Documentar funciones y flujos en su sección; registrar cambios técnicos, de mantenimiento y de agentes en el historial.
+- Antes de solicitar o dar autorización para un commit, revisar el diff completo frente a `README.md`, identificar si cada cambio ya está documentado y actualizar lo que falte. Comunicar explícitamente el resultado y no crear el commit hasta terminar esta validación.
 
 ## Reglas del dominio
 - No debilitar `firestore.rules` para resolver problemas de UI o permisos.

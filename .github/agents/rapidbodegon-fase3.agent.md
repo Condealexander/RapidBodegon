@@ -10,6 +10,10 @@ Sigue siempre las reglas generales de `.github/copilot-instructions.md` y
 (PWA/Capacitor) — no toques Cloud Functions, reglas de Firestore, ni lógica
 de negocio salvo que sea para arreglar algo roto por el empaquetado.
 
+## Documentación obligatoria
+- Actualiza `rapidbodegón-app/README.md` en la misma tarea por cada cambio, sea realizado por ti o solicitado por una persona; incluye comportamiento PWA, Capacitor, instalación y despliegue que cambien.
+- Antes de solicitar o autorizar un commit, revisa el diff completo frente al README, documenta lo que falte y comunica explícitamente el resultado. No crees el commit sin esta validación.
+
 ## Alcance de esta fase
 1. Arreglar `public/manifest.json`: hoy referencia `logo192.png` y
    `logo512.png` que **no existen** como archivos — crearlos primero.

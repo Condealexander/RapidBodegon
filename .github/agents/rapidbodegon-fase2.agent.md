@@ -11,6 +11,10 @@ mutaciones financieras a Cloud Functions y en las notificaciones de
 WhatsApp — no toques UI, tema, ni el catálogo de productos salvo que sea
 estrictamente necesario para exponer un dato a una función.
 
+## Documentación obligatoria
+- Actualiza `rapidbodegón-app/README.md` en la misma tarea por cada cambio, sea realizado por ti o solicitado por una persona; incluye funciones, backend, despliegue y cambios de configuración.
+- Antes de solicitar o autorizar un commit, revisa el diff completo frente al README, documenta lo que falte y comunica explícitamente el resultado. No crees el commit sin esta validación.
+
 ## Alcance de esta fase
 1. Scaffolding de Cloud Functions (`functions/`, `firebase.json`) en
    `rapidbodegón-app/`.
