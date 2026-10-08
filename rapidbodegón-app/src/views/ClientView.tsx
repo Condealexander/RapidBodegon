@@ -7,7 +7,6 @@ import {
 } from 'lucide-react';
 import { Card, CardHeader, CardContent, Button, Input, Label } from '../components';
 import { Onboarding } from '../components/ui/Onboarding';
-import { PrivacyNoticeLink } from '../components/ui/PrivacyNotice';
 import { ThemeToggle } from '../components/ThemeToggle';
 
 // Cámbialo a true solo cuando quieras que los clientes puedan reportar su
@@ -538,9 +537,6 @@ export const ClientView = () => {
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto mt-8 text-center">
-        <PrivacyNoticeLink />
-      </div>
     </div>
   );
 }

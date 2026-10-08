@@ -5,6 +5,8 @@
 
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { AppProvider, useApp } from './store/AppContext';
+import { PrivacyNoticeLink } from './components/ui/PrivacyNotice';
+import { trackAnalyticsView, type AnalyticsView } from './lib/analytics';
 import { Login } from './views/Login';
 
 // AdminView arrastra recharts y xlsx (pesados); solo se descarga si entra un admin.
@@ -54,6 +56,13 @@ const OfflineNotice = () => (
 const MainApp = () => {
   const { currentUser, authLoading } = useApp();
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const analyticsView: AnalyticsView | null = authLoading
+    ? null
+    : !currentUser
+      ? 'login'
+      : currentUser.role === 'ADMIN'
+        ? 'admin'
+        : 'client';
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -68,10 +77,19 @@ const MainApp = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (analyticsView) trackAnalyticsView(analyticsView);
+  }, [analyticsView]);
+
   // Mientras Firebase restaura la sesión guardada, no mostramos el Login
   // (evita el destello de "Ingresar al Sistema" al recargar estando logueado).
   if (authLoading) {
-    return <LoadingScreen text="Cargando..." />;
+    return (
+      <>
+        <LoadingScreen text="Cargando..." />
+        <PrivacyNoticeLink currentScreen={null} />
+      </>
+    );
   }
 
   const renderContent = () => {
@@ -98,6 +116,7 @@ const MainApp = () => {
     <>
       {isOffline && <OfflineNotice />}
       {renderContent()}
+      <PrivacyNoticeLink currentScreen={analyticsView} />
     </>
   );
 };

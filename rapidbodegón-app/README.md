@@ -27,6 +27,8 @@ en la versión inicial:
   preferencia guardada se conserva al entrar en la vista de cliente o admin.
 - El panel administrativo comparte la identidad visual del inicio de sesión y
   ClientView, con adaptaciones para modo claro, gráficos y estados.
+- Google Analytics 4 mide vistas generales solo después de que la persona acepta
+  la analítica; se puede rechazar o retirar el consentimiento desde Privacidad.
 - Scripts de administración con Firebase Admin SDK para crear usuarios y
   mantener datos sensibles fuera del navegador.
 - Aviso visible de conexión offline y de día de corte para clientes con saldo
@@ -45,6 +47,26 @@ en la versión inicial:
 La lógica de negocio central vive en `src/store/AppContext.tsx`; las vistas en
 `src/views/`, los componentes reutilizables en `src/components/`, los tipos en
 `src/types/` y la autorización en `firestore.rules`.
+
+## Privacidad y analítica
+
+La aplicación solicita consentimiento antes de cargar Google Analytics 4. La
+elección (aceptada o rechazada) se guarda en el almacenamiento local del
+navegador; si no puede guardarse o no hay decisión, Analytics permanece
+desactivado. El control «Privacidad» está disponible en las distintas vistas
+para revisar el aviso y cambiar la preferencia. Al retirar el consentimiento se
+deshabilitan los envíos posteriores de Analytics.
+
+Con consentimiento, se registran vistas generales de Login, cliente y
+administración para medir uso de la aplicación. No se envían nombres, UID, PIN,
+saldos, referencias de pago, consumos ni eventos financieros; tampoco se
+habilitan Google Signals ni personalización publicitaria. Google puede recibir
+información técnica de navegación y usar cookies o identificadores de analítica.
+La app no envía formularios ni eventos de negocio; la medición mejorada de
+formularios, clics u otras interacciones, si está habilitada en la propiedad de
+GA4, se configura por separado en la consola de Google y debe revisarse allí.
+El aviso de privacidad integrado describe este tratamiento; debe mantenerse
+alineado con las prácticas reales y los requisitos aplicables.
 
 ## Flujo principal
 
@@ -383,6 +405,9 @@ esa comprobación.
   el ciclo vigente y registrar egresos en USD. Los egresos se descuentan del
   recaudado neto del ciclo y del disponible global acumulado; se agregan el
   ledger financiero y su inicialización única con Admin SDK.
+- **2026-10-08:** se integra Google Analytics 4 con consentimiento previo,
+  opción para rechazar o retirar la autorización, vistas generales para la SPA
+  y límites explícitos para no enviar identificadores ni datos financieros.
 
 ## Licencia
 
