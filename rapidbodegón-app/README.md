@@ -19,7 +19,8 @@ en la versión inicial:
 - Registro del service worker después de la carga inicial de la página para
   reducir trabajo durante el arranque, manteniendo la precarga PWA para uso offline.
 - Actualización diaria de la tasa de cobro desde DolarApi al abrir el panel
-  administrativo, con opción de ajuste manual y registro de origen/hora.
+  administrativo y al comenzar un nuevo día venezolano mientras la sesión de
+  administración sigue activa, con opción de ajuste manual y registro de origen/hora.
 - Preparación de Cloud Functions (Node 22) para backend server-side, sin
   conectarlas aún al cliente ni desplegarlas en producción.
 - Soporte para temas claro/oscuro, importación de inventario y cierre de ciclos.
@@ -115,12 +116,14 @@ desactivado con `ENABLE_CONSUMPTION_REPORT = false` en `src/views/ClientView.tsx
 - Ajusta varios stocks manualmente y guarda los cambios juntos con un solo
   botón, o importa `.xlsx`, `.xls` y `.csv` con columnas `PRODUCTO` y `STOCK`,
   y una columna opcional `PRECIO`.
-- La tasa se consulta automáticamente como máximo una vez por día de Venezuela
-  al abrir el panel. Se usa el promedio de las tasas oficial y paralela de
-  DolarApi cuando ambas están disponibles; si solo hay una, se usa esa. El
-  administrador también puede actualizarla manualmente. La pantalla muestra
-  origen y hora de la última actualización; si falla la consulta automática, se
-  conserva la tasa guardada.
+- La tasa se consulta al abrir el panel y cuando comienza un nuevo día de
+  Venezuela mientras la sesión de administración sigue activa. Se usa el
+  promedio de las tasas oficial y paralela de DolarApi cuando ambas están
+  disponibles; si solo hay una, se usa esa. Si falla la consulta, se reintenta
+  cada cinco minutos mientras el panel siga abierto. El administrador también
+  puede actualizarla manualmente. La pantalla muestra origen y hora de la
+  última actualización; si falla la consulta automática, se conserva la tasa
+  guardada. No es una tarea de servidor: no se ejecuta con la app cerrada.
 - Revisa el histórico de ciclos y cierra períodos de cobro.
 - Puede cambiar el tema visual y operar desde la misma experiencia web o la
   versión instalada como app.
@@ -408,6 +411,10 @@ esa comprobación.
 - **2026-10-08:** se integra Google Analytics 4 con consentimiento previo,
   opción para rechazar o retirar la autorización, vistas generales para la SPA
   y límites explícitos para no enviar identificadores ni datos financieros.
+- **2026-10-09:** la tasa automática vuelve a comprobarse al cambiar el día
+  venezolano mientras el panel administrativo permanece abierto; las fallas se
+  reintentan cada cinco minutos y se mantiene el límite de una actualización
+  diaria.
 
 ## Licencia
 

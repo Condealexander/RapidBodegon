@@ -47,7 +47,7 @@ interface DollarApiQuote {
   promedio?: unknown;
 }
 
-const getVenezuelaDateKey = (date = new Date()): string => {
+export const getVenezuelaDateKey = (date = new Date()): string => {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Caracas',
     year: 'numeric',

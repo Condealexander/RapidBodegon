@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useApp } from '../store/AppContext';
+import { getVenezuelaDateKey, useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
 import { getNextCutoff, getPreviousCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
 import {
@@ -44,6 +44,9 @@ export const AdminView = () => {
   const [expenseAmount, setExpenseAmount] = useState('');
   const [expenseError, setExpenseError] = useState('');
   const expenseSubmissionRef = useRef(false);
+  const successfulRateRefreshDayRef = useRef<string | null>(null);
+  const rateRefreshRetryRef = useRef<{ dateKey: string; after: number } | null>(null);
+  const rateRefreshInFlightRef = useRef(false);
 
   const [actionError, setActionError] = useState<string>('');
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -58,18 +61,55 @@ export const AdminView = () => {
 
   useEffect(() => {
     let active = true;
-    setRateMsg('Consultando la tasa automática...');
-    void refreshExchangeRateFromSources().then(result => {
-      if (!active) return;
-      if (!result.success) {
-        setRateMsg(result.error || 'No se pudo actualizar la tasa automáticamente.');
-      } else if (result.updated) {
-        setRateMsg(`Tasa promedio actualizada: ${formatBs(1, result.rate)}.`);
-      } else {
-        setRateMsg('La tasa ya se consultó hoy o fue ajustada manualmente.');
+    const refreshIfNeeded = async () => {
+      const dateKey = getVenezuelaDateKey();
+      if (
+        rateRefreshInFlightRef.current
+        || successfulRateRefreshDayRef.current === dateKey
+        || (rateRefreshRetryRef.current?.dateKey === dateKey
+          && Date.now() < rateRefreshRetryRef.current.after)
+      ) return;
+
+      rateRefreshInFlightRef.current = true;
+      if (active) setRateMsg('Consultando la tasa automática...');
+      try {
+        const result = await refreshExchangeRateFromSources();
+        if (result.success) {
+          successfulRateRefreshDayRef.current = dateKey;
+          rateRefreshRetryRef.current = null;
+        } else {
+          rateRefreshRetryRef.current = { dateKey, after: Date.now() + 5 * 60_000 };
+        }
+
+        if (!active) return;
+        if (!result.success) {
+          setRateMsg(result.error || 'No se pudo actualizar la tasa automáticamente.');
+        } else if (result.updated) {
+          const updatedRate = result.rate ?? config.exchangeRate ?? 0;
+          setRateMsg(`Tasa promedio actualizada: ${formatBs(1, updatedRate)}.`);
+        } else {
+          setRateMsg('La tasa ya se consultó hoy o fue ajustada manualmente.');
+        }
+      } finally {
+        rateRefreshInFlightRef.current = false;
       }
-    });
-    return () => { active = false; };
+    };
+    const refreshWhenVisible = () => {
+      if (!document.hidden) void refreshIfNeeded();
+    };
+    const dayCheckInterval = window.setInterval(() => {
+      void refreshIfNeeded();
+    }, 60_000);
+
+    void refreshIfNeeded();
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      active = false;
+      window.clearInterval(dayCheckInterval);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
   }, [refreshExchangeRateFromSources]);
 
   const usersById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
