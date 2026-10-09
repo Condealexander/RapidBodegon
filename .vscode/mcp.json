@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
+    "firebase": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "firebase-tools@latest", "mcp"]
+    }
+   }    
+}

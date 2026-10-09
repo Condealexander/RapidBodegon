@@ -288,6 +288,11 @@ npm run analyze
 - `npm run cap:sync`: compila y sincroniza cambios con Capacitor.
 - `npm --prefix functions run build`: compila Cloud Functions.
 
+En VS Code, `.vscode/mcp.json` configura Playwright MCP para interactuar con la
+aplicación en un navegador. La primera ejecución requiere que `npx` pueda
+descargar el paquete; la validación visual no sustituye las pruebas de permisos
+de Firestore.
+
 El build de producción se genera en `dist/`. Vite separa en chunks Firebase,
 el panel administrativo (incluidos sus gráficos) y XLSX. El parser XLSX se
 solicita al elegir un archivo. El service worker mantiene la precarga de todos
@@ -415,6 +420,10 @@ esa comprobación.
   venezolano mientras el panel administrativo permanece abierto; las fallas se
   reintentan cada cinco minutos y se mantiene el límite de una actualización
   diaria.
+- **2026-10-09:** se amplían las instrucciones de Copilot con comandos
+  comprobados, arquitectura activa de la app y límites entre el cliente
+  Firestore y el scaffold no conectado de Cloud Functions; se configura
+  Playwright MCP en VS Code para interacción de navegador.
 
 ## Licencia
 

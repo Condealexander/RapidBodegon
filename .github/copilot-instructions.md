@@ -4,6 +4,28 @@ Para tareas relacionadas con la aplicación, consulta `rapidbodegón-app/memory.
 
 Estas instrucciones aplican a cualquier agente que modifique este repositorio (Copilot coding agent, Claude Code, u otro), y también a la revisión de cualquier Pull Request, sin importar quién lo haya abierto.
 
+## Arquitectura y límites activos
+- La aplicación está en `rapidbodegón-app/`; ejecuta desde allí los comandos de npm de la app. `App.tsx` monta `AppProvider` y selecciona Login, ClientView o AdminView según la sesión y el rol; las vistas autenticadas se cargan de forma diferida.
+- `src/store/AppContext.tsx` concentra autenticación, suscripciones a Firestore y operaciones de negocio compartidas. `src/types/` define los modelos; `src/utils/` contiene lógica reutilizable como fechas de ciclos.
+- El cliente aún realiza las operaciones directamente en Firestore. `firestore.rules` es la autorización efectiva; `functions/` es un scaffold separado y no está conectado al cliente ni desplegado. No migres un flujo a Functions ni dependas de sus reglas sin migrar y validar el flujo completo.
+- Mantén juntos en una transacción de Firestore los cambios de saldo, stock, transacción y acumulados financieros que formen parte de una misma operación. Relee precio y stock desde Firestore en esa transacción; no tomes como autoritativos valores calculados en el cliente.
+- La PWA y los bundles web se configuran en `vite.config.ts`; `src/main.tsx` registra el service worker y `capacitor.config.ts` enlaza el build web con Android/iOS. Un cambio de arranque, assets o caché puede afectar tanto web como los paquetes nativos.
+- El tema se inicializa en `src/components/useTheme.ts` mediante `data-theme`; los ajustes del tema claro están en `src/theme-overrides.css`. Para estilos de AdminView, conserva el scope `.admin-view`.
+- `.vscode/mcp.json` configura Playwright MCP para validación visual y flujos en navegador cuando esté disponible; no sustituye la validación de reglas y permisos de Firestore.
+
+## Comandos
+Desde `rapidbodegón-app/`:
+
+```bash
+npm run dev
+npm run build
+npm run analyze
+npm run cap:sync
+npm --prefix functions run build
+```
+
+`npm run build` valida el frontend; el comando de Functions compila su TypeScript por separado. No hay scripts de lint ni un runner/archivo de pruebas del proyecto, así que no existe un comando de suite ni de prueba individual. No indiques que un build valida Firestore Rules, interacciones en vivo o un despliegue.
+
 ## Antes de modificar
 - Localiza el componente, función o regla que realmente controla el comportamiento y revisa sus llamadas y tipos cercanos.
 - Mantén los cambios acotados y respeta las APIs y convenciones existentes.
