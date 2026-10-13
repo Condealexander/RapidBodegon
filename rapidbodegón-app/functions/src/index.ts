@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
@@ -324,6 +325,181 @@ export const importProducts = onCall(async (request) => {
     return { updated, created };
   });
   return counts;
+});
+
+
+/**
+ * Receives a TPago notice relayed by the signed-in administrator's Android app.
+ * A match is only a suggestion: it never approves a payment or changes a balance.
+ */
+export const ingestMercantilTpago = onCall(async (request) => {
+  const adminUid = await requireAdmin(request);
+  const eventId = requireString(request.data?.eventId, 'eventId').toLowerCase();
+  const reference = requireString(request.data?.reference, 'reference');
+  const notificationDate = requireString(request.data?.notificationDate, 'notificationDate');
+  const notificationTime = requireString(request.data?.notificationTime, 'notificationTime')
+    .replace(/\\s+/g, ' ').trim().toUpperCase();
+  const amountBs = requirePositiveNumber(request.data?.amountBs, 'amountBs');
+  const postedAtMs = request.data?.postedAtMs;
+
+  if (!/^[a-f0-9]{64}$/.test(eventId)) {
+    throw new HttpsError('invalid-argument', 'Identificador de evento inválido.');
+  }
+  if (!/^\\d{4,12}$/.test(reference)) {
+    throw new HttpsError('invalid-argument', 'La referencia TPago debe contener entre 4 y 12 dígitos.');
+  }
+  if (!/^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(notificationDate)
+    || !/^\\d{1,2}:\\d{2}\\s*[AP]M$/i.test(notificationTime)) {
+    throw new HttpsError('invalid-argument', 'Fecha u hora de notificación inválida.');
+  }
+  if (typeof postedAtMs !== 'number' || !Number.isSafeInteger(postedAtMs) || postedAtMs <= 0) {
+    throw new HttpsError('invalid-argument', 'Fecha de recepción inválida.');
+  }
+
+  const amountBsCents = Math.round(amountBs * 100);
+  const calculatedEventId = createHash('sha256')
+    .update(`${reference}|${amountBsCents}|${notificationDate}|${notificationTime}`)
+    .digest('hex');
+  if (calculatedEventId !== eventId) {
+    throw new HttpsError('invalid-argument', 'El identificador no corresponde al evento recibido.');
+  }
+
+  const eventRef = db.collection('bankEvents').doc(eventId);
+  const previousEvent = await eventRef.get();
+  if (previousEvent.exists) {
+    return {
+      success: true,
+      duplicate: true,
+      eventId,
+      status: String(previousEvent.get('status') ?? 'unmatched'),
+    };
+  }
+
+  const config = await db.doc('config/global').get();
+  const exchangeRateValue = config.get('exchangeRate');
+  const exchangeRate = typeof exchangeRateValue === 'number'
+    && Number.isFinite(exchangeRateValue) && exchangeRateValue > 0
+    ? exchangeRateValue
+    : null;
+  const amountUSDCents = exchangeRate === null
+    ? null
+    : Math.round((amountBs / exchangeRate) * 100);
+
+  // ClientView intentionally accepts the last 4–6 digits of the bank reference.
+  // Include the full reference too, in case a report was created by an older client.
+  const referenceCandidates = [...new Set([
+    reference,
+    reference.slice(-4),
+    reference.slice(-5),
+    reference.slice(-6),
+  ].filter((value) => value.length >= 4 && value.length <= 12))];
+
+  const reportsSnapshot = await db.collection('transactions')
+    .where('reference', 'in', referenceCandidates)
+    .get();
+  const referenceReports = reportsSnapshot.docs.filter((snapshot) => {
+    const tx = snapshot.data();
+    return tx.type === 'PAYMENT'
+      && typeof tx.reference === 'string'
+      && referenceCandidates.includes(tx.reference);
+  });
+  const pendingReports = referenceReports.filter((snapshot) => snapshot.get('status') === 'PENDING');
+
+  let status: string;
+  let matchedTransactionId: string | null = null;
+  let reviewReason: string | null = null;
+  let amountMatches: typeof pendingReports = [];
+
+  if (exchangeRate === null || amountUSDCents === null) {
+    status = 'needs_review';
+    reviewReason = 'missing_exchange_rate';
+  } else {
+    amountMatches = pendingReports.filter((snapshot) => {
+      const amountUSD = snapshot.get('amountUSD');
+      return typeof amountUSD === 'number'
+        && Number.isFinite(amountUSD)
+        && Math.round(amountUSD * 100) === amountUSDCents;
+    });
+
+    if (amountMatches.length === 1) {
+      status = 'candidate_match';
+      matchedTransactionId = amountMatches[0].id;
+    } else if (amountMatches.length > 1) {
+      status = 'ambiguous';
+      reviewReason = 'multiple_payments_same_reference_and_amount';
+    } else if (pendingReports.length > 0) {
+      status = 'amount_mismatch';
+      reviewReason = 'reference_suffix_matches_but_amount_does_not';
+    } else if (referenceReports.some((snapshot) => snapshot.get('status') === 'COMPLETED')) {
+      status = 'already_processed';
+      reviewReason = 'reference_was_already_completed';
+    } else {
+      status = 'unmatched';
+      reviewReason = 'no_pending_payment_with_reference_suffix';
+    }
+  }
+
+  const eventData: Record<string, unknown> = {
+    bank: 'MERCANTIL',
+    operation: 'TPAGO',
+    reference,
+    amountBs: amountBsCents / 100,
+    amountBsCents,
+    amountUSDCents,
+    exchangeRate,
+    notificationDate,
+    notificationTime,
+    postedAtMs,
+    status,
+    matchedTransactionId,
+    candidateTransactionIds: pendingReports.map((snapshot) => snapshot.id),
+    reviewReason,
+    receivedBy: adminUid,
+    receivedAt: FieldValue.serverTimestamp(),
+  };
+
+  await db.runTransaction(async (transaction) => {
+    const existing = await transaction.get(eventRef);
+    if (existing.exists) {
+      status = String(existing.get('status') ?? status);
+      return;
+    }
+
+    if (status === 'candidate_match' && matchedTransactionId) {
+      const matchedRef = db.doc(`transactions/${matchedTransactionId}`);
+      const matchedSnapshot = await transaction.get(matchedRef);
+      if (!matchedSnapshot.exists
+        || matchedSnapshot.get('type') !== 'PAYMENT'
+        || matchedSnapshot.get('status') !== 'PENDING') {
+        status = 'already_processed';
+        matchedTransactionId = null;
+        reviewReason = 'payment_changed_during_reconciliation';
+        eventData.status = status;
+        eventData.matchedTransactionId = null;
+        eventData.reviewReason = reviewReason;
+      } else {
+        transaction.update(matchedRef, {
+          bankMatchStatus: 'CANDIDATE_MATCH',
+          bankMatchEventId: eventId,
+          bankReference: reference,
+          bankAmountBsCents: amountBsCents,
+          bankAmountUSDCents: amountUSDCents,
+          bankExchangeRate: exchangeRate,
+        });
+      }
+    }
+
+    transaction.create(eventRef, eventData);
+  });
+
+  const savedEvent = await eventRef.get();
+  return {
+    success: true,
+    duplicate: false,
+    eventId,
+    status: String(savedEvent.get('status') ?? status),
+    matchedTransactionId: savedEvent.get('matchedTransactionId') ?? null,
+  };
 });
 
 export const validateTransactionOnCreate = onDocumentCreated(
