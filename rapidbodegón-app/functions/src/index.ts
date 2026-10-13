@@ -332,6 +332,133 @@ export const importProducts = onCall(async (request) => {
  * Receives a TPago notice relayed by the signed-in administrator's Android app.
  * A match is only a suggestion: it never approves a payment or changes a balance.
  */
+
+/**
+ * Re-evaluates a previously received bank event when a customer reports a payment
+ * after the notification arrived. This keeps the reconciliation order-independent.
+ */
+async function reconcileStoredTpagoEvent(eventId: string): Promise<void> {
+  const eventRef = db.collection('bankEvents').doc(eventId);
+  const eventSnapshot = await eventRef.get();
+  if (!eventSnapshot.exists) return;
+
+  const event = eventSnapshot.data()!;
+  if (event.status === 'already_processed' || event.status === 'needs_review') return;
+  if (typeof event.reference !== 'string'
+    || typeof event.amountUSDCents !== 'number'
+    || !Number.isInteger(event.amountUSDCents)) return;
+
+  const fullReference = event.reference;
+  const referenceCandidates = [...new Set([
+    fullReference,
+    fullReference.slice(-4),
+    fullReference.slice(-5),
+    fullReference.slice(-6),
+  ].filter((value) => value.length >= 4 && value.length <= 12))];
+
+  const reportsSnapshot = await db.collection('transactions')
+    .where('reference', 'in', referenceCandidates)
+    .get();
+  const referenceReports = reportsSnapshot.docs.filter((snapshot) => {
+    const tx = snapshot.data();
+    return tx.type === 'PAYMENT'
+      && typeof tx.reference === 'string'
+      && referenceCandidates.includes(tx.reference);
+  });
+  const pendingReports = referenceReports.filter((snapshot) => snapshot.get('status') === 'PENDING');
+  const amountMatches = pendingReports.filter((snapshot) => {
+    const amountUSD = snapshot.get('amountUSD');
+    return typeof amountUSD === 'number'
+      && Number.isFinite(amountUSD)
+      && Math.round(amountUSD * 100) === event.amountUSDCents;
+  });
+
+  let nextStatus: string;
+  let nextMatchedId: string | null = null;
+  let reviewReason: string | null = null;
+
+  if (amountMatches.length === 1) {
+    nextStatus = 'candidate_match';
+    nextMatchedId = amountMatches[0].id;
+  } else if (amountMatches.length > 1) {
+    nextStatus = 'ambiguous';
+    reviewReason = 'multiple_payments_same_reference_and_amount';
+  } else if (pendingReports.length > 0) {
+    nextStatus = 'amount_mismatch';
+    reviewReason = 'reference_suffix_matches_but_amount_does_not';
+  } else if (referenceReports.some((snapshot) => snapshot.get('status') === 'COMPLETED')) {
+    nextStatus = 'already_processed';
+    reviewReason = 'reference_was_already_completed';
+  } else {
+    nextStatus = 'unmatched';
+    reviewReason = 'no_pending_payment_with_reference_suffix';
+  }
+
+  await db.runTransaction(async (transaction) => {
+    const currentEvent = await transaction.get(eventRef);
+    if (!currentEvent.exists) return;
+    const currentStatus = currentEvent.get('status');
+    if (currentStatus === 'already_processed' || currentStatus === 'needs_review') return;
+
+    const previousMatchId = typeof currentEvent.get('matchedTransactionId') === 'string'
+      ? currentEvent.get('matchedTransactionId') as string
+      : null;
+    const idsToRead = [...new Set([previousMatchId, nextMatchedId].filter(
+      (id): id is string => typeof id === 'string' && id.length > 0
+    ))];
+    const transactionSnapshots = new Map<string, FirebaseFirestore.DocumentSnapshot>();
+    for (const id of idsToRead) {
+      transactionSnapshots.set(id, await transaction.get(db.doc(`transactions/${id}`)));
+    }
+
+    if (nextStatus === 'candidate_match' && nextMatchedId) {
+      const candidate = transactionSnapshots.get(nextMatchedId);
+      if (!candidate?.exists
+        || candidate.get('type') !== 'PAYMENT'
+        || candidate.get('status') !== 'PENDING'
+        || typeof candidate.get('amountUSD') !== 'number'
+        || Math.round(candidate.get('amountUSD') * 100) !== event.amountUSDCents) {
+        nextStatus = 'needs_review';
+        nextMatchedId = null;
+        reviewReason = 'payment_changed_during_reconciliation';
+      }
+    }
+
+    if (previousMatchId && previousMatchId !== nextMatchedId) {
+      const previousMatch = transactionSnapshots.get(previousMatchId);
+      if (previousMatch?.exists && previousMatch.get('status') === 'PENDING') {
+        transaction.update(db.doc(`transactions/${previousMatchId}`), {
+          bankMatchStatus: FieldValue.delete(),
+          bankMatchEventId: FieldValue.delete(),
+          bankReference: FieldValue.delete(),
+          bankAmountBsCents: FieldValue.delete(),
+          bankAmountUSDCents: FieldValue.delete(),
+          bankExchangeRate: FieldValue.delete(),
+        });
+      }
+    }
+
+    if (nextStatus === 'candidate_match' && nextMatchedId) {
+      transaction.update(db.doc(`transactions/${nextMatchedId}`), {
+        bankMatchStatus: 'CANDIDATE_MATCH',
+        bankMatchEventId: eventId,
+        bankReference: fullReference,
+        bankAmountBsCents: event.amountBsCents,
+        bankAmountUSDCents: event.amountUSDCents,
+        bankExchangeRate: event.exchangeRate,
+      });
+    }
+
+    transaction.update(eventRef, {
+      status: nextStatus,
+      matchedTransactionId: nextMatchedId,
+      candidateTransactionIds: pendingReports.map((snapshot) => snapshot.id),
+      reviewReason,
+      reconciledAt: FieldValue.serverTimestamp(),
+    });
+  });
+}
+
 export const ingestMercantilTpago = onCall(async (request) => {
   const adminUid = await requireAdmin(request);
   const eventId = requireString(request.data?.eventId, 'eventId').toLowerCase();
@@ -443,6 +570,7 @@ export const ingestMercantilTpago = onCall(async (request) => {
     bank: 'MERCANTIL',
     operation: 'TPAGO',
     reference,
+    referenceSuffixes: referenceCandidates,
     amountBs: amountBsCents / 100,
     amountBsCents,
     amountUSDCents,
@@ -525,6 +653,18 @@ export const validateTransactionOnCreate = onDocumentCreated(
           .get();
         if (duplicates.docs.some((doc) => doc.id !== snapshot.id)) {
           reviewReasons.push('duplicate_reference');
+        }
+
+        // A customer can submit their report after the bank notification was
+        // queued; revisit recent TPago events that contain this exact suffix.
+        const relatedEvents = await db.collection('bankEvents')
+          .where('referenceSuffixes', 'array-contains', tx.reference)
+          .where('postedAtMs', '>=', Date.now() - DUPLICATE_REFERENCE_WINDOW_MS)
+          .orderBy('postedAtMs', 'desc')
+          .limit(25)
+          .get();
+        for (const bankEvent of relatedEvents.docs) {
+          await reconcileStoredTpagoEvent(bankEvent.id);
         }
       }
     } else if (tx.type === 'CONSUMPTION') {
