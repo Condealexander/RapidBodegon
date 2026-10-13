@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useApp } from '../store/AppContext';
 import { formatCurrency, formatBs } from '../utils/format';
 import { getNextCutoff, getPreviousCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
 import {
   Users, DollarSign, Wallet, Calendar, Plus,
   CheckCircle2, XCircle, Search, Clock, LogOut, BarChart3,
-  Package, Upload, Save, Receipt, AlertCircle, History
+  Package, Upload, Save, Receipt, AlertCircle, History, Smartphone, RefreshCw
 } from 'lucide-react';
 import { Card, CardHeader, CardContent, Button, Input, Label } from '../components';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -13,12 +14,29 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import type { ProductImportRow } from '../store/AppContext';
+import { db } from '../firebase';
+import {
+  isMercantilNativeApp,
+  MercantilTpago,
+  syncPendingMercantilEvents,
+} from '../lib/mercantilTpago';
+import type { MercantilBankEvent, MercantilEventStatus } from '../lib/mercantilTpago';
 
 type ActionResult = { success: boolean; error?: string };
 
 const dayKey = (iso: string) => {
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+
+const BANK_STATUS_UI: Record<MercantilEventStatus, { label: string; className: string }> = {
+  candidate_match: { label: 'Coincidencia sugerida', className: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' },
+  ambiguous: { label: 'Varias coincidencias', className: 'text-amber-300 bg-amber-500/10 border-amber-500/20' },
+  amount_mismatch: { label: 'Monto diferente', className: 'text-amber-300 bg-amber-500/10 border-amber-500/20' },
+  unmatched: { label: 'Sin reporte coincidente', className: 'text-slate-300 bg-slate-500/10 border-slate-500/20' },
+  already_processed: { label: 'Referencia ya procesada', className: 'text-slate-300 bg-slate-500/10 border-slate-500/20' },
+  needs_review: { label: 'Revisión manual', className: 'text-amber-300 bg-amber-500/10 border-amber-500/20' },
 };
 
 export const AdminView = () => {
@@ -51,6 +69,11 @@ export const AdminView = () => {
   const [stockEdits, setStockEdits] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
   const [importMsg, setImportMsg] = useState<string>('');
+  const [bankEvents, setBankEvents] = useState<MercantilBankEvent[]>([]);
+  const [bankNotificationAccess, setBankNotificationAccess] = useState(false);
+  const [bankSyncBusy, setBankSyncBusy] = useState(false);
+  const [bankSyncMessage, setBankSyncMessage] = useState('');
+  const bankSyncInFlightRef = useRef(false);
 
   useEffect(() => {
     setNewRate(String(config.exchangeRate ?? ''));
@@ -238,6 +261,69 @@ export const AdminView = () => {
     if (result.success) setTimeout(() => setRateMsg(''), 3000);
   };
 
+
+  const refreshMercantilNotifications = async (openSettingsIfNeeded = false) => {
+    if (!isMercantilNativeApp()) {
+      setBankSyncMessage('La lectura de notificaciones está disponible en la aplicación Android instalada.');
+      return;
+    }
+    if (bankSyncInFlightRef.current) return;
+
+    bankSyncInFlightRef.current = true;
+    setBankSyncBusy(true);
+    try {
+      const access = await MercantilTpago.hasNotificationAccess();
+      setBankNotificationAccess(access.enabled);
+      if (!access.enabled) {
+        if (openSettingsIfNeeded) {
+          await MercantilTpago.openNotificationAccessSettings();
+        }
+        setBankSyncMessage('Activa el acceso a notificaciones para RapidBodegón en Android y vuelve a esta pantalla.');
+        return;
+      }
+
+      const result = await syncPendingMercantilEvents();
+      if (result.errors.length > 0) {
+        setBankSyncMessage(`Quedaron ${result.errors.length} evento(s) por sincronizar. Se reintentará automáticamente.`);
+      } else if (result.processed === 0 && result.duplicates === 0) {
+        setBankSyncMessage('Lector activo. No hay notificaciones pendientes en el teléfono.');
+      } else {
+        setBankSyncMessage(`Sincronización completada: ${result.processed} nuevo(s), ${result.duplicates} duplicado(s).`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error desconocido.';
+      setBankSyncMessage(`No se pudo sincronizar TPago: ${message}`);
+    } finally {
+      bankSyncInFlightRef.current = false;
+      setBankSyncBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    const eventsQuery = query(
+      collection(db, 'bankEvents'),
+      orderBy('receivedAt', 'desc'),
+      limit(12)
+    );
+    return onSnapshot(
+      eventsQuery,
+      snapshot => setBankEvents(snapshot.docs.map(item => ({
+        id: item.id,
+        ...item.data(),
+      } as MercantilBankEvent))),
+      error => setBankSyncMessage(error.message || 'No se pudo cargar el historial TPago.')
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!isMercantilNativeApp()) return;
+    void refreshMercantilNotifications();
+    const timer = window.setInterval(() => {
+      void refreshMercantilNotifications();
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const handleStockInputChange = (productId: string, value: string) => {
     const product = products.find(p => p.id === productId);
     const parsedValue = value.trim() === '' ? NaN : Number(value);
@@ -378,6 +464,75 @@ export const AdminView = () => {
           </button>
         </div>
       )}
+
+
+      <Card className="max-w-7xl mx-auto mb-6 border-sky-500/30">
+        <CardHeader
+          title="Conciliación TPago Mercantil"
+          subtitle="Las coincidencias son sugerencias; la aprobación del pago sigue siendo manual."
+        />
+        <CardContent className="p-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="text-sm text-slate-300">
+              {isMercantilNativeApp()
+                ? (bankNotificationAccess
+                  ? 'Acceso a notificaciones habilitado. RapidBodegón revisa los avisos pendientes mientras esta pantalla está abierta.'
+                  : 'Conecta el lector para detectar avisos TPago de Mercantil en este teléfono.')
+                : 'Para leer avisos bancarios necesitas abrir RapidBodegón desde la aplicación Android instalada, no desde el navegador.'}
+            </div>
+            <div className="flex gap-2 shrink-0">
+              <Button
+                variant="secondary"
+                className="px-3 py-2"
+                disabled={!isMercantilNativeApp() || bankSyncBusy}
+                onClick={() => void refreshMercantilNotifications(!bankNotificationAccess)}
+              >
+                {bankSyncBusy
+                  ? <RefreshCw size={16} className="mr-2 animate-spin" />
+                  : <Smartphone size={16} className="mr-2" />}
+                {bankNotificationAccess ? 'Sincronizar' : 'Activar lector'}
+              </Button>
+            </div>
+          </div>
+          {bankSyncMessage && (
+            <p role="status" className="mt-3 text-xs text-slate-400">{bankSyncMessage}</p>
+          )}
+          {bankEvents.length > 0 && (
+            <div className="mt-4 divide-y divide-slate-700/50 rounded-lg border border-slate-700/60">
+              {bankEvents.slice(0, 8).map(event => {
+                const status = BANK_STATUS_UI[event.status] || BANK_STATUS_UI.needs_review;
+                return (
+                  <div key={event.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 p-3">
+                    <div>
+                      <p className="font-medium text-white">
+                        TPago · Ref. {event.reference}
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        {event.amountBs.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Bs.
+                        {' · '}{event.notificationDate} {event.notificationTime}
+                        {event.amountUSDCents !== null && event.amountUSDCents !== undefined
+                          ? ` · Equivalente estimado: ${(event.amountUSDCents / 100).toFixed(2)}`
+                          : ''}
+                      </p>
+                      {event.matchedTransactionId && (
+                        <p className="text-xs text-slate-400 mt-1">
+                          Reporte sugerido: {event.matchedTransactionId}
+                        </p>
+                      )}
+                      {event.reviewReason && (
+                        <p className="text-xs text-amber-300 mt-1">{event.reviewReason}</p>
+                      )}
+                    </div>
+                    <span className={`inline-flex w-fit items-center rounded-full border px-2 py-1 text-xs ${status.className}`}>
+                      {status.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
         <Card className="bg-gradient-to-br from-blue-900/50 to-slate-800 border-blue-500/20">
@@ -550,6 +705,11 @@ export const AdminView = () => {
                             </span>
                             {product && product.stock < qty && (
                               <span className="text-red-400 text-xs">stock insuficiente ({product.stock})</span>
+                            )}
+                            {tx.bankMatchStatus === 'CANDIDATE_MATCH' && (
+                              <span className="inline-flex items-center gap-1 text-emerald-300 text-xs" role="status">
+                                <CheckCircle2 size={13} /> TPago coincidente · revisar
+                              </span>
                             )}
                             {tx.needsReview && (
                               <span className="inline-flex items-center gap-1 text-amber-400 text-xs" role="status">
