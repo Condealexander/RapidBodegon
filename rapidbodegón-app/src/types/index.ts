@@ -37,6 +37,13 @@ export interface Transaction {
   bank?: string;
   needsReview?: boolean;
   reviewReasons?: string[];
+  // Suggested bank-notification reconciliation; never an approval by itself.
+  bankMatchStatus?: 'CANDIDATE_MATCH';
+  bankMatchEventId?: string;
+  bankReference?: string;
+  bankAmountBsCents?: number;
+  bankAmountUSDCents?: number;
+  bankExchangeRate?: number;
 }
 
 export interface Expense {
