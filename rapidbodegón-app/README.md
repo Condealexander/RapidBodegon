@@ -81,9 +81,9 @@ alineado con las prácticas reales y los requisitos aplicables.
 - Consulta datos bancarios de pago móvil/transferencia, con copia individual o
   copia masiva de todos los campos relevantes.
 - Reporta pagos con monto y referencia; esos reportes quedan `PENDING` hasta
-  su aprobación por parte del administrador. La referencia acepta de 4 a 6
-  dígitos y no se puede reutilizar mientras otro reporte con esa referencia no
-  esté rechazado.
+  su aprobación por parte del administrador. La referencia acepta los últimos
+  4 a 6 dígitos del movimiento bancario y no se puede reutilizar mientras otro
+  reporte con esa referencia no esté rechazado.
 - Consulta historial de pagos y consumos, y recibe onboarding y aviso de
   privacidad.
 - Visualiza precios y productos disponibles, ocultando items sin stock.
@@ -170,20 +170,76 @@ npx cap sync
 La app aún no está publicada en tiendas ni conectada a un flujo de distribución
 nativo completo; esto queda como siguiente paso operativo.
 
+
+## Conciliación TPago Mercantil en Android
+
+El lector nativo escucha notificaciones publicadas por la aplicación Android
+oficial `com.mercantilbanco.mercantilmovil` y reconoce avisos con formato
+`TPAGO RECIBIDO Bs ... del ... ref ..., DD/MM/YYYY, HH:MM AM/PM`.
+
+- El servicio requiere que el administrador conceda acceso a notificaciones
+  desde los ajustes de Android. La PWA/web en navegador no puede leer avisos
+  publicados por otras aplicaciones.
+- El lector conserva una cola local acotada a 50 eventos y guarda solo referencia,
+  importe en bolívares, fecha/hora e identificador determinista. No persiste el
+  teléfono del remitente ni el texto completo del aviso.
+- La vista `AdminView.tsx` ofrece la acción para activar el lector y sincroniza
+  la cola aproximadamente cada 8 segundos mientras la vista está abierta en la
+  aplicación Android. Para sincronizar hace falta una sesión de administrador
+  con Firebase Authentication y conexión a internet.
+- Los eventos se envían mediante la callable `ingestMercantilTpago`. El backend
+  comprueba la referencia, el importe convertido según la tasa configurada y los
+  reportes pendientes. Resultados posibles: `candidate_match`, `ambiguous`,
+  `amount_mismatch`, `unmatched`, `already_processed` y `needs_review`.
+- Una coincidencia es solo una sugerencia al administrador, no una validación
+  bancaria definitiva. La aprobación manual existente se mantiene como decisión
+  final. Los eventos se almacenan en `bankEvents/{eventId}`; solo el rol
+  `ADMIN` puede leer esa colección desde el cliente.
+- La referencia que se introduce actualmente en `ClientView.tsx` es de 4 a 6
+  dígitos, de acuerdo con la opción de Mercantil de compartir los últimos dígitos.
+  Se compara contra el sufijo de la referencia completa recibida por TPago.
+
+Para compilar/sincronizar el cliente nativo y desplegar las funciones, usa los
+comandos siguientes desde `rapidbodegón-app/` después de revisar los cambios:
+
+```bash
+npm run build
+npx cap sync android
+npm --prefix functions run build
+npm --prefix functions run deploy
+```
+
+El despliegue de reglas de Firestore es independiente:
+
+```bash
+npx firebase deploy --only firestore:rules --project=rapidbodegon
+```
+
+No debe considerarse listo para producción hasta compilar Android, probar el
+lector con una notificación real anonimizada y verificar el flujo con cuentas
+de cliente y administrador en un entorno de prueba.
+
 ## Cloud Functions y backend
 
-Hay un scaffold de Cloud Functions en `functions/` preparado con Node.js 22 y
-Firebase Functions v7. El código incluye validaciones de UID y acceso de admin,
-pero la aplicación sigue operando con Firestore y la lógica del cliente actual
-hasta que el backend se despliegue y valide en producción.
+El directorio `functions/` contiene Cloud Functions v2 con Node.js 22 y
+Firebase Functions v7. Hay funciones callable para operaciones administrativas
+y una función de ingestión de notificaciones TPago de Mercantil. El despliegue
+del código no se da por hecho al hacer push: debe ejecutarse y verificarse en
+Firebase por separado.
 
-Este estado es intencional:
-
-- No se conectan Callable Functions desde el cliente.
-- No se despliegan reglas que dependan del backend antes de migrar y probar la
-  experiencia completa.
-- La notificación externa por CallMeBot queda aplazada y no se ejecuta en este
-  repositorio.
+- `ingestMercantilTpago` requiere una sesión autenticada cuyo perfil Firestore
+  tenga el rol `ADMIN`; valida el identificador del evento y lo guarda de forma
+  idempotente.
+- La función compara el sufijo de 4, 5 o 6 dígitos de la referencia bancaria con
+  reportes `PAYMENT` pendientes, y convierte el monto de bolívares a USD con
+  la tasa `config/global.exchangeRate` vigente al conciliar.
+- Las coincidencias se guardan como sugerencias. La función no cambia el estado
+  a `COMPLETED`, no aprueba pagos ni modifica saldos financieros.
+- Las acciones web preexistentes de reportar y aprobar pagos siguen usando
+  actualmente operaciones de Firestore desde `AppContext.tsx`; esta integración
+  no representa una migración completa de todo el flujo financiero al backend.
+- Las notificaciones externas por CallMeBot siguen aplazadas y no se ejecutan
+  en este repositorio.
 
 ## Datos de Firestore
 
@@ -191,7 +247,8 @@ Este estado es intencional:
 |---|---|
 | `users/{uid}` | `id`, `name`, `role` (`ADMIN` o `CLIENT`), `balanceUSD` |
 | `products/{id}` | `id`, `name`, `priceUSD`, `stock` |
-| `transactions/{id}` | `userId`, `type` (`CONSUMPTION` o `PAYMENT`), `amountUSD`, `date`, `status` (`PENDING`, `COMPLETED` o `REJECTED`), `productId?`, `quantity?`, `reference?` |
+| `transactions/{id}` | `userId`, `type` (`CONSUMPTION` o `PAYMENT`), `amountUSD`, `date`, `status` (`PENDING`, `COMPLETED` o `REJECTED`), `productId?`, `quantity?`, `reference?`, `bankMatchStatus?`, `bankMatchEventId?` |
+| `bankEvents/{eventId}` | Referencia completa TPago, importe en Bs, tasa/importe USD calculado, fecha/hora, estado de conciliación y transacción sugerida; acceso de lectura solo para ADMIN |
 | `config/global` | `exchangeRate`, `cutoffDays`, `bankDetails` |
 | `cycles/{id}` | `periodStart`, `periodEnd`, `totalCollected`, `totalConsumption`, `closedAt` |
 | `expenses/{id}` | `description`, `amountUSD`, `date`, `createdBy`; registros administrativos inmutables |
