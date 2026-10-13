@@ -516,7 +516,7 @@ export const AdminView = () => {
                       </p>
                       {event.matchedTransactionId && (
                         <p className="text-xs text-slate-400 mt-1">
-                          Reporte sugerido: {event.matchedTransactionId}
+                          Reporte sugerido: pago pendiente resaltado en la lista.
                         </p>
                       )}
                       {event.reviewReason && (
