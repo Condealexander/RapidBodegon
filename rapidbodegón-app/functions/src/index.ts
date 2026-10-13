@@ -403,21 +403,21 @@ async function reconcileStoredTpagoEvent(eventId: string): Promise<void> {
     const previousMatchId = typeof currentEvent.get('matchedTransactionId') === 'string'
       ? currentEvent.get('matchedTransactionId') as string
       : null;
-    const idsToRead = [...new Set([previousMatchId, nextMatchedId].filter(
-      (id): id is string => typeof id === 'string' && id.length > 0
-    ))];
-    const transactionSnapshots = new Map<string, FirebaseFirestore.DocumentSnapshot>();
-    for (const id of idsToRead) {
-      transactionSnapshots.set(id, await transaction.get(db.doc(`transactions/${id}`)));
-    }
+    const previousMatch = previousMatchId
+      ? await transaction.get(db.doc(`transactions/${previousMatchId}`))
+      : undefined;
+    const nextMatch = nextMatchedId
+      ? (nextMatchedId === previousMatchId
+        ? previousMatch
+        : await transaction.get(db.doc(`transactions/${nextMatchedId}`)))
+      : undefined;
 
     if (nextStatus === 'candidate_match' && nextMatchedId) {
-      const candidate = transactionSnapshots.get(nextMatchedId);
-      if (!candidate?.exists
-        || candidate.get('type') !== 'PAYMENT'
-        || candidate.get('status') !== 'PENDING'
-        || typeof candidate.get('amountUSD') !== 'number'
-        || Math.round(candidate.get('amountUSD') * 100) !== event.amountUSDCents) {
+      if (!nextMatch?.exists
+        || nextMatch.get('type') !== 'PAYMENT'
+        || nextMatch.get('status') !== 'PENDING'
+        || typeof nextMatch.get('amountUSD') !== 'number'
+        || Math.round(nextMatch.get('amountUSD') * 100) !== event.amountUSDCents) {
         nextStatus = 'needs_review';
         nextMatchedId = null;
         reviewReason = 'payment_changed_during_reconciliation';
@@ -425,7 +425,6 @@ async function reconcileStoredTpagoEvent(eventId: string): Promise<void> {
     }
 
     if (previousMatchId && previousMatchId !== nextMatchedId) {
-      const previousMatch = transactionSnapshots.get(previousMatchId);
       if (previousMatch?.exists && previousMatch.get('status') === 'PENDING') {
         transaction.update(db.doc(`transactions/${previousMatchId}`), {
           bankMatchStatus: FieldValue.delete(),
