@@ -146,6 +146,13 @@ service cloud.firestore {
         && request.resource.data.updatedAt is string;
     }
 
+    // Bank events are created/updated only by the trusted Admin SDK callable.
+    // Only administrators may inspect bank notification contents.
+    match /bankEvents/{eventId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false;
+    }
+
     // Deny everything else by default (no more `allow read, write: if true`).
     match /{document=**} {
       allow read, write: if false;

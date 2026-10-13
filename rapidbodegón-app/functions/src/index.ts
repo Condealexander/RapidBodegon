@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
@@ -326,6 +327,308 @@ export const importProducts = onCall(async (request) => {
   return counts;
 });
 
+
+/**
+ * Receives a TPago notice relayed by the signed-in administrator's Android app.
+ * A match is only a suggestion: it never approves a payment or changes a balance.
+ */
+
+/**
+ * Re-evaluates a previously received bank event when a customer reports a payment
+ * after the notification arrived. This keeps the reconciliation order-independent.
+ */
+async function reconcileStoredTpagoEvent(eventId: string): Promise<void> {
+  const eventRef = db.collection('bankEvents').doc(eventId);
+  const eventSnapshot = await eventRef.get();
+  if (!eventSnapshot.exists) return;
+
+  const event = eventSnapshot.data()!;
+  if (event.status === 'already_processed' || event.status === 'needs_review') return;
+  if (typeof event.reference !== 'string'
+    || typeof event.amountUSDCents !== 'number'
+    || !Number.isInteger(event.amountUSDCents)) return;
+
+  const fullReference = event.reference;
+  const referenceCandidates = [...new Set([
+    fullReference,
+    fullReference.slice(-4),
+    fullReference.slice(-5),
+    fullReference.slice(-6),
+  ].filter((value) => value.length >= 4 && value.length <= 12))];
+
+  const reportsSnapshot = await db.collection('transactions')
+    .where('reference', 'in', referenceCandidates)
+    .get();
+  const referenceReports = reportsSnapshot.docs.filter((snapshot) => {
+    const tx = snapshot.data();
+    return tx.type === 'PAYMENT'
+      && typeof tx.reference === 'string'
+      && referenceCandidates.includes(tx.reference);
+  });
+  const pendingReports = referenceReports.filter((snapshot) => snapshot.get('status') === 'PENDING');
+  const amountMatches = pendingReports.filter((snapshot) => {
+    const amountUSD = snapshot.get('amountUSD');
+    return typeof amountUSD === 'number'
+      && Number.isFinite(amountUSD)
+      && Math.round(amountUSD * 100) === event.amountUSDCents;
+  });
+
+  let nextStatus: string;
+  let nextMatchedId: string | null = null;
+  let reviewReason: string | null = null;
+
+  if (amountMatches.length === 1) {
+    nextStatus = 'candidate_match';
+    nextMatchedId = amountMatches[0].id;
+  } else if (amountMatches.length > 1) {
+    nextStatus = 'ambiguous';
+    reviewReason = 'multiple_payments_same_reference_and_amount';
+  } else if (pendingReports.length > 0) {
+    nextStatus = 'amount_mismatch';
+    reviewReason = 'reference_suffix_matches_but_amount_does_not';
+  } else if (referenceReports.some((snapshot) => snapshot.get('status') === 'COMPLETED')) {
+    nextStatus = 'already_processed';
+    reviewReason = 'reference_was_already_completed';
+  } else {
+    nextStatus = 'unmatched';
+    reviewReason = 'no_pending_payment_with_reference_suffix';
+  }
+
+  await db.runTransaction(async (transaction) => {
+    const currentEvent = await transaction.get(eventRef);
+    if (!currentEvent.exists) return;
+    const currentStatus = currentEvent.get('status');
+    if (currentStatus === 'already_processed' || currentStatus === 'needs_review') return;
+
+    const previousMatchId = typeof currentEvent.get('matchedTransactionId') === 'string'
+      ? currentEvent.get('matchedTransactionId') as string
+      : null;
+    const previousMatch = previousMatchId
+      ? await transaction.get(db.doc(`transactions/${previousMatchId}`))
+      : undefined;
+    const nextMatch = nextMatchedId
+      ? (nextMatchedId === previousMatchId
+        ? previousMatch
+        : await transaction.get(db.doc(`transactions/${nextMatchedId}`)))
+      : undefined;
+
+    if (nextStatus === 'candidate_match' && nextMatchedId) {
+      if (!nextMatch?.exists
+        || nextMatch.get('type') !== 'PAYMENT'
+        || nextMatch.get('status') !== 'PENDING'
+        || typeof nextMatch.get('amountUSD') !== 'number'
+        || Math.round(nextMatch.get('amountUSD') * 100) !== event.amountUSDCents) {
+        nextStatus = 'needs_review';
+        nextMatchedId = null;
+        reviewReason = 'payment_changed_during_reconciliation';
+      }
+    }
+
+    if (previousMatchId && previousMatchId !== nextMatchedId) {
+      if (previousMatch?.exists && previousMatch.get('status') === 'PENDING') {
+        transaction.update(db.doc(`transactions/${previousMatchId}`), {
+          bankMatchStatus: FieldValue.delete(),
+          bankMatchEventId: FieldValue.delete(),
+          bankReference: FieldValue.delete(),
+          bankAmountBsCents: FieldValue.delete(),
+          bankAmountUSDCents: FieldValue.delete(),
+          bankExchangeRate: FieldValue.delete(),
+        });
+      }
+    }
+
+    if (nextStatus === 'candidate_match' && nextMatchedId) {
+      transaction.update(db.doc(`transactions/${nextMatchedId}`), {
+        bankMatchStatus: 'CANDIDATE_MATCH',
+        bankMatchEventId: eventId,
+        bankReference: fullReference,
+        bankAmountBsCents: event.amountBsCents,
+        bankAmountUSDCents: event.amountUSDCents,
+        bankExchangeRate: event.exchangeRate,
+      });
+    }
+
+    transaction.update(eventRef, {
+      status: nextStatus,
+      matchedTransactionId: nextMatchedId,
+      candidateTransactionIds: pendingReports.map((snapshot) => snapshot.id),
+      reviewReason,
+      reconciledAt: FieldValue.serverTimestamp(),
+    });
+  });
+}
+
+export const ingestMercantilTpago = onCall(async (request) => {
+  const adminUid = await requireAdmin(request);
+  const eventId = requireString(request.data?.eventId, 'eventId').toLowerCase();
+  const reference = requireString(request.data?.reference, 'reference');
+  const notificationDate = requireString(request.data?.notificationDate, 'notificationDate');
+  const notificationTime = requireString(request.data?.notificationTime, 'notificationTime')
+    .replace(/\s+/g, ' ').trim().toUpperCase();
+  const amountBs = requirePositiveNumber(request.data?.amountBs, 'amountBs');
+  const postedAtMs = request.data?.postedAtMs;
+
+  if (!/^[a-f0-9]{64}$/.test(eventId)) {
+    throw new HttpsError('invalid-argument', 'Identificador de evento inválido.');
+  }
+  if (!/^\d{4,12}$/.test(reference)) {
+    throw new HttpsError('invalid-argument', 'La referencia TPago debe contener entre 4 y 12 dígitos.');
+  }
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(notificationDate)
+    || !/^\d{1,2}:\d{2}\s*[AP]M$/i.test(notificationTime)) {
+    throw new HttpsError('invalid-argument', 'Fecha u hora de notificación inválida.');
+  }
+  if (typeof postedAtMs !== 'number' || !Number.isSafeInteger(postedAtMs) || postedAtMs <= 0) {
+    throw new HttpsError('invalid-argument', 'Fecha de recepción inválida.');
+  }
+
+  const amountBsCents = Math.round(amountBs * 100);
+  const calculatedEventId = createHash('sha256')
+    .update(`${reference}|${amountBsCents}|${notificationDate}|${notificationTime}`)
+    .digest('hex');
+  if (calculatedEventId !== eventId) {
+    throw new HttpsError('invalid-argument', 'El identificador no corresponde al evento recibido.');
+  }
+
+  const eventRef = db.collection('bankEvents').doc(eventId);
+  const previousEvent = await eventRef.get();
+  if (previousEvent.exists) {
+    return {
+      success: true,
+      duplicate: true,
+      eventId,
+      status: String(previousEvent.get('status') ?? 'unmatched'),
+    };
+  }
+
+  const config = await db.doc('config/global').get();
+  const exchangeRateValue = config.get('exchangeRate');
+  const exchangeRate = typeof exchangeRateValue === 'number'
+    && Number.isFinite(exchangeRateValue) && exchangeRateValue > 0
+    ? exchangeRateValue
+    : null;
+  const amountUSDCents = exchangeRate === null
+    ? null
+    : Math.round((amountBs / exchangeRate) * 100);
+
+  // ClientView intentionally accepts the last 4–6 digits of the bank reference.
+  // Include the full reference too, in case a report was created by an older client.
+  const referenceCandidates = [...new Set([
+    reference,
+    reference.slice(-4),
+    reference.slice(-5),
+    reference.slice(-6),
+  ].filter((value) => value.length >= 4 && value.length <= 12))];
+
+  const reportsSnapshot = await db.collection('transactions')
+    .where('reference', 'in', referenceCandidates)
+    .get();
+  const referenceReports = reportsSnapshot.docs.filter((snapshot) => {
+    const tx = snapshot.data();
+    return tx.type === 'PAYMENT'
+      && typeof tx.reference === 'string'
+      && referenceCandidates.includes(tx.reference);
+  });
+  const pendingReports = referenceReports.filter((snapshot) => snapshot.get('status') === 'PENDING');
+
+  let status: string;
+  let matchedTransactionId: string | null = null;
+  let reviewReason: string | null = null;
+  let amountMatches: typeof pendingReports = [];
+
+  if (exchangeRate === null || amountUSDCents === null) {
+    status = 'needs_review';
+    reviewReason = 'missing_exchange_rate';
+  } else {
+    amountMatches = pendingReports.filter((snapshot) => {
+      const amountUSD = snapshot.get('amountUSD');
+      return typeof amountUSD === 'number'
+        && Number.isFinite(amountUSD)
+        && Math.round(amountUSD * 100) === amountUSDCents;
+    });
+
+    if (amountMatches.length === 1) {
+      status = 'candidate_match';
+      matchedTransactionId = amountMatches[0].id;
+    } else if (amountMatches.length > 1) {
+      status = 'ambiguous';
+      reviewReason = 'multiple_payments_same_reference_and_amount';
+    } else if (pendingReports.length > 0) {
+      status = 'amount_mismatch';
+      reviewReason = 'reference_suffix_matches_but_amount_does_not';
+    } else if (referenceReports.some((snapshot) => snapshot.get('status') === 'COMPLETED')) {
+      status = 'already_processed';
+      reviewReason = 'reference_was_already_completed';
+    } else {
+      status = 'unmatched';
+      reviewReason = 'no_pending_payment_with_reference_suffix';
+    }
+  }
+
+  const eventData: Record<string, unknown> = {
+    bank: 'MERCANTIL',
+    operation: 'TPAGO',
+    reference,
+    referenceSuffixes: referenceCandidates,
+    amountBs: amountBsCents / 100,
+    amountBsCents,
+    amountUSDCents,
+    exchangeRate,
+    notificationDate,
+    notificationTime,
+    postedAtMs,
+    status,
+    matchedTransactionId,
+    candidateTransactionIds: pendingReports.map((snapshot) => snapshot.id),
+    reviewReason,
+    receivedBy: adminUid,
+    receivedAt: FieldValue.serverTimestamp(),
+  };
+
+  await db.runTransaction(async (transaction) => {
+    const existing = await transaction.get(eventRef);
+    if (existing.exists) {
+      status = String(existing.get('status') ?? status);
+      return;
+    }
+
+    if (status === 'candidate_match' && matchedTransactionId) {
+      const matchedRef = db.doc(`transactions/${matchedTransactionId}`);
+      const matchedSnapshot = await transaction.get(matchedRef);
+      if (!matchedSnapshot.exists
+        || matchedSnapshot.get('type') !== 'PAYMENT'
+        || matchedSnapshot.get('status') !== 'PENDING') {
+        status = 'already_processed';
+        matchedTransactionId = null;
+        reviewReason = 'payment_changed_during_reconciliation';
+        eventData.status = status;
+        eventData.matchedTransactionId = null;
+        eventData.reviewReason = reviewReason;
+      } else {
+        transaction.update(matchedRef, {
+          bankMatchStatus: 'CANDIDATE_MATCH',
+          bankMatchEventId: eventId,
+          bankReference: reference,
+          bankAmountBsCents: amountBsCents,
+          bankAmountUSDCents: amountUSDCents,
+          bankExchangeRate: exchangeRate,
+        });
+      }
+    }
+
+    transaction.create(eventRef, eventData);
+  });
+
+  const savedEvent = await eventRef.get();
+  return {
+    success: true,
+    duplicate: false,
+    eventId,
+    status: String(savedEvent.get('status') ?? status),
+    matchedTransactionId: savedEvent.get('matchedTransactionId') ?? null,
+  };
+});
+
 export const validateTransactionOnCreate = onDocumentCreated(
   { document: 'transactions/{transactionId}', retry: true },
   async (event) => {
@@ -349,6 +652,18 @@ export const validateTransactionOnCreate = onDocumentCreated(
           .get();
         if (duplicates.docs.some((doc) => doc.id !== snapshot.id)) {
           reviewReasons.push('duplicate_reference');
+        }
+
+        // A customer can submit their report after the bank notification was
+        // queued; revisit recent TPago events that contain this exact suffix.
+        const relatedEvents = await db.collection('bankEvents')
+          .where('referenceSuffixes', 'array-contains', tx.reference)
+          .where('postedAtMs', '>=', Date.now() - DUPLICATE_REFERENCE_WINDOW_MS)
+          .orderBy('postedAtMs', 'desc')
+          .limit(25)
+          .get();
+        for (const bankEvent of relatedEvents.docs) {
+          await reconcileStoredTpagoEvent(bankEvent.id);
         }
       }
     } else if (tx.type === 'CONSUMPTION') {

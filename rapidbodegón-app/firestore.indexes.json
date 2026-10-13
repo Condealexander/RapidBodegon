@@ -4,10 +4,36 @@
       "collectionGroup": "transactions",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "userId", "order": "ASCENDING" },
-        { "fieldPath": "type", "order": "ASCENDING" },
-        { "fieldPath": "reference", "order": "ASCENDING" },
-        { "fieldPath": "date", "order": "ASCENDING" }
+        {
+          "fieldPath": "userId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "type",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "reference",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "date",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "bankEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "referenceSuffixes",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "postedAtMs",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],
