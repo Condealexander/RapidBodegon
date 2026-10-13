@@ -338,18 +338,18 @@ export const ingestMercantilTpago = onCall(async (request) => {
   const reference = requireString(request.data?.reference, 'reference');
   const notificationDate = requireString(request.data?.notificationDate, 'notificationDate');
   const notificationTime = requireString(request.data?.notificationTime, 'notificationTime')
-    .replace(/\\s+/g, ' ').trim().toUpperCase();
+    .replace(/\s+/g, ' ').trim().toUpperCase();
   const amountBs = requirePositiveNumber(request.data?.amountBs, 'amountBs');
   const postedAtMs = request.data?.postedAtMs;
 
   if (!/^[a-f0-9]{64}$/.test(eventId)) {
     throw new HttpsError('invalid-argument', 'Identificador de evento inválido.');
   }
-  if (!/^\\d{4,12}$/.test(reference)) {
+  if (!/^\d{4,12}$/.test(reference)) {
     throw new HttpsError('invalid-argument', 'La referencia TPago debe contener entre 4 y 12 dígitos.');
   }
-  if (!/^\\d{2}\\/\\d{2}\\/\\d{4}$/.test(notificationDate)
-    || !/^\\d{1,2}:\\d{2}\\s*[AP]M$/i.test(notificationTime)) {
+  if (!/^\d{2}\/\d{2}\/\d{4}$/.test(notificationDate)
+    || !/^\d{1,2}:\d{2}\s*[AP]M$/i.test(notificationTime)) {
     throw new HttpsError('invalid-argument', 'Fecha u hora de notificación inválida.');
   }
   if (typeof postedAtMs !== 'number' || !Number.isSafeInteger(postedAtMs) || postedAtMs <= 0) {
