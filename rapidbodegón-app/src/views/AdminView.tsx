@@ -706,11 +706,6 @@ export const AdminView = () => {
                             {product && product.stock < qty && (
                               <span className="text-red-400 text-xs">stock insuficiente ({product.stock})</span>
                             )}
-                            {tx.bankMatchStatus === 'CANDIDATE_MATCH' && (
-                              <span className="inline-flex items-center gap-1 text-emerald-300 text-xs" role="status">
-                                <CheckCircle2 size={13} /> TPago coincidente · revisar
-                              </span>
-                            )}
                             {tx.needsReview && (
                               <span className="inline-flex items-center gap-1 text-amber-400 text-xs" role="status">
                                 <AlertCircle size={13} /> Revisar
@@ -765,6 +760,11 @@ export const AdminView = () => {
                           <div className="flex gap-3 text-sm mt-1">
                             <span className="text-yellow-400 font-medium">{formatCurrency(tx.amountUSD)}</span>
                             <span className="text-slate-400">Ref: {tx.reference}</span>
+                            {tx.bankMatchStatus === 'CANDIDATE_MATCH' && (
+                              <span className="inline-flex items-center gap-1 text-emerald-300 text-xs" role="status">
+                                <CheckCircle2 size={13} /> TPago coincidente · revisar
+                              </span>
+                            )}
                             {tx.needsReview && (
                               <span className="inline-flex items-center gap-1 text-amber-400 text-xs" role="status">
                                 <AlertCircle size={13} /> Revisar
