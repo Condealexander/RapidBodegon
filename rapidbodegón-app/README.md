@@ -206,13 +206,13 @@ comandos siguientes desde `rapidbodegón-app/` después de revisar los cambios:
 npm run build
 npx cap sync android
 npm --prefix functions run build
-npm --prefix functions run deploy
 ```
 
-El despliegue de reglas de Firestore es independiente:
+Despliega primero índices y reglas; después despliega las funciones:
 
 ```bash
-npx firebase deploy --only firestore:rules --project=rapidbodegon
+firebase deploy --only firestore:indexes,firestore:rules --project=rapidbodegon
+firebase deploy --only functions --project=rapidbodegon
 ```
 
 No debe considerarse listo para producción hasta compilar Android, probar el
