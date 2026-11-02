@@ -261,10 +261,16 @@ gcloud auth application-default login
 | `seed-data.mjs` | Cargar productos iniciales y `config/global`: `node scripts/seed-data.mjs --project=rapidbodegon` |
 | `import-products.mjs` | Reemplazar productos de prueba `p1` a `p8` con catálogo del script: `node scripts/import-products.mjs --project=rapidbodegon` |
 | `migrate-financials.mjs` | Inicializar una sola vez `financials/global` desde pagos y egresos existentes: `npm run migrate-financials -- --project=rapidbodegon` |
+| `recalc-balances.mjs` | Comparar saldos de clientes y totales globales con el historial. Por defecto es simulacro; solo escribe con `--apply` y guarda un respaldo fuera del repositorio. Permite excluir nombres con `--skip="NOMBRE UNO,NOMBRE DOS"`. |
 
 El importador asigna un stock inicial de 100 unidades. Revisa los cambios antes
 de operar y ajusta existencias desde el panel de inventario si se requiere
 contenido real del negocio.
+
+`recalc-balances.mjs` requiere credenciales ADC autorizadas. Revisa el resultado
+del simulacro y cualquier saldo manual antes de usar `--apply`; el script no
+debe ejecutarse como parte del build ni sin una revisión de los datos que
+corregiría.
 
 ## Desarrollo local
 
@@ -344,7 +350,9 @@ producción.
 
 - `memory.md`: contexto técnico, stack y arquitectura del repositorio.
 - `agent.md` y `.github/copilot-instructions.md`: pautas generales de trabajo.
-- `.github/agents/*.agent.md`: instrucciones de los agentes especializados.
+- `.github/agents/*.agent.md`: instrucciones de los agentes especializados, incluidos
+  desarrollo (RapidBodegón), Fase 2 (Cloud Functions/WhatsApp), Fase 3
+  (PWA/Capacitor), UX Expert y auditoría del repositorio (`repo-audit.agent.md`).
 
 ## Tema visual
 
@@ -389,6 +397,13 @@ esa comprobación.
 
 ## Historial de actualizaciones recientes
 
+- **2026-11-02:** se añade el script administrativo `recalc-balances.mjs` para
+  comparar los saldos de clientes y acumulados globales con el historial, con
+  simulacro predeterminado, exclusión opcional de clientes y respaldo previo a
+  cualquier escritura.
+- **2026-10-13:** se añade el agente de auditoría del repositorio
+  (`repo-audit.agent.md`) para producir informes detallados del estado del
+  proyecto, riesgos y ajustes necesarios. No cambia la funcionalidad de la app.
 - **2026-10-06:** se agregó la actualización diaria de la tasa desde DolarApi
   (promedio oficial/paralelo cuando ambas fuentes están disponibles), el aviso
   de día de corte con saldo pendiente y los controles de formato y duplicados
