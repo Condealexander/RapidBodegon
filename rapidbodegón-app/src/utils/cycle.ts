@@ -54,6 +54,40 @@ export interface CyclePeriod {
   end: Date;
 }
 
+export interface CycleTransaction {
+  type: string;
+  status: string;
+  amountUSD: number;
+  date: string;
+}
+
+export interface CycleTotals {
+  totalCollected: number;
+  totalConsumption: number;
+}
+
+export const sumCycleTransactions = (
+  transactions: Iterable<CycleTransaction>,
+  period: CyclePeriod
+): CycleTotals => {
+  const totals: CycleTotals = { totalCollected: 0, totalConsumption: 0 };
+  const start = period.start.getTime();
+  const end = period.end.getTime();
+
+  for (const transaction of transactions) {
+    const date = new Date(transaction.date).getTime();
+    if (!Number.isFinite(date) || transaction.status !== 'COMPLETED' || date < start || date >= end) continue;
+
+    if (transaction.type === 'PAYMENT') {
+      totals.totalCollected += transaction.amountUSD;
+    } else if (transaction.type === 'CONSUMPTION') {
+      totals.totalConsumption += transaction.amountUSD;
+    }
+  }
+
+  return totals;
+};
+
 /**
  * Ciclos pasados que todavía no están registrados en `closedIds`, desde el
  * más reciente hacia atrás, hasta `maxLookback` ciclos o hasta encontrar uno

@@ -10,6 +10,7 @@ Consulta `rapidbodegón-app/memory.md` cuando necesites contexto de arquitectura
 ## Antes de modificar
 - Localiza el componente, función o regla que realmente controla el comportamiento y revisa sus llamadas y tipos cercanos.
 - Mantén los cambios acotados y respeta las APIs y convenciones existentes.
+- **Scripts administrativos protegidos:** no edites, formatees, muevas, renombres ni elimines archivos bajo `rapidbodegón-app/scripts/`, incluido `recalc-balances.mjs`, salvo autorización explícita del usuario/mantenedor para cambiar esos scripts. Una petición general de arreglar, revisar o documentar no es autorización para alterarlos. Si el cambio está autorizado, conserva el alcance exacto solicitado y exige revisión del CODEOWNER y la aprobación CI configurada para esa ruta.
 - Trata `rapidbodegón-app/README.md` como orientación y confirma en el código si una función o pendiente sigue vigente.
 - Actualiza obligatoriamente `rapidbodegón-app/README.md` en la misma tarea por cada cambio del repositorio, sea propio o solicitado por una persona. Documenta funciones y flujos en su sección y registra cambios técnicos o de agentes en el historial.
 - Antes de solicitar o dar autorización para un commit, compara el diff completo con el README; señala si ya cubre el cambio o actualízalo antes de continuar. No crees el commit hasta completar esta validación.

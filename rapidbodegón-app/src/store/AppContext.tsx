@@ -15,6 +15,7 @@ import {
   UserCredential
 } from 'firebase/auth';
 import { getPreviousCutoff, listPastUnclosedCycles } from '../utils/cycle';
+import { closeCycleIfMissing } from './cycleClosures';
 
 interface RegisterResult {
   success: boolean;
@@ -137,7 +138,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const [currentCycleTransactionsReady, setCurrentCycleTransactionsReady] = useState(false);
   const [config, setConfig] = useState<AppConfig>(mockConfig);
   const [cycles, setCycles] = useState<Cycle[]>([]);
-  const [transactionsReady, setTransactionsReady] = useState(false);
   const [cyclesReady, setCyclesReady] = useState(false);
   const currentCycleStartISO = getPreviousCutoff().toISOString();
 
@@ -325,11 +325,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
   // Transactions
   useEffect(() => {
-    if (!authReady || !currentUser) {
-      setTransactionsReady(false);
-      return;
-    }
-    setTransactionsReady(false);
+    if (!authReady || !currentUser) return;
 
     const txCol = collection(db, 'transactions');
     const txQuery = currentUser.role === 'ADMIN'
@@ -344,7 +340,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         snapshot.forEach(docSnap => list.push({ id: docSnap.id, ...docSnap.data() } as Transaction));
         list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         setTransactions(list);
-        if (!snapshot.metadata.fromCache) setTransactionsReady(true);
       },
       (error) => console.warn('Firestore transactions listener warning:', error)
     );
@@ -415,14 +410,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   }, [authReady, currentUser?.id, currentUser?.role]);
 
   // Cierre automático de ciclos vencidos: corre UNA vez por sesión de admin,
-  // una vez que ya sabemos qué ciclos están cerrados (cycles) y tenemos las
-  // transacciones cargadas para calcular los totales. No es instantáneo al
-  // llegar la fecha de corte (no hay backend corriendo solo) — se pone al
-  // día la primera vez que un admin abre el panel después del corte.
+  // cuando conocemos los ciclos ya cerrados. Cada período consulta directamente
+  // sus transacciones, sin depender del historial del dashboard limitado a
+  // 1.000 documentos; el cierre se crea transaccionalmente solo si no existe.
   useEffect(() => {
     if (!authReady || !currentUser || currentUser.role !== 'ADMIN') return;
     if (cycleCloseAttemptedRef.current) return;
-    if (!transactionsReady || !cyclesReady) return;
+    if (!cyclesReady) return;
 
     cycleCloseAttemptedRef.current = true;
 
@@ -432,42 +426,14 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
     (async () => {
       for (const period of due) {
-        const totalCollected = transactions
-          .filter(t => t.type === 'PAYMENT' && t.status === 'COMPLETED')
-          .filter(t => {
-            const d = new Date(t.date).getTime();
-            return d >= period.start.getTime() && d < period.end.getTime();
-          })
-          .reduce((acc, t) => acc + t.amountUSD, 0);
-
-        const totalConsumption = transactions
-          .filter(t => t.type === 'CONSUMPTION' && t.status === 'COMPLETED')
-          .filter(t => {
-            const d = new Date(t.date).getTime();
-            return d >= period.start.getTime() && d < period.end.getTime();
-          })
-          .reduce((acc, t) => acc + t.amountUSD, 0);
-
         try {
-          await runTransaction(db, async (transaction) => {
-            const cycleRef = doc(db, 'cycles', period.id);
-            const cycleSnapshot = await transaction.get(cycleRef);
-            if (cycleSnapshot.exists()) return;
-
-            transaction.set(cycleRef, {
-              periodStart: period.start.toISOString(),
-              periodEnd: period.end.toISOString(),
-              totalCollected,
-              totalConsumption,
-              closedAt: new Date().toISOString()
-            });
-          });
+          await closeCycleIfMissing(db, period);
         } catch (e) {
           console.warn('No se pudo cerrar el ciclo', period.id, e);
         }
       }
     })();
-  }, [authReady, currentUser?.id, currentUser?.role, cycles, cyclesReady, transactions, transactionsReady]);
+  }, [authReady, currentUser?.id, currentUser?.role, cycles, cyclesReady]);
 
   useEffect(() => {
     if (currentUser?.role === 'ADMIN') {

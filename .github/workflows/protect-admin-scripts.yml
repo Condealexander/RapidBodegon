@@ -1,0 +1,52 @@
+name: Protect administrative scripts
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+    paths:
+      - 'rapidbodegón-app/scripts/**'
+      - '.github/CODEOWNERS'
+      - '.github/workflows/protect-admin-scripts.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  require-script-authorization:
+    name: require-admin-script-authorization
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require authorization label for protected paths
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_PATH: ${{ github.event_path }}
+          APPROVAL_LABEL: admin-scripts-approved
+        run: |
+          set -euo pipefail
+
+          changed_files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          if ! printf '%s\n' "$changed_files" |
+            grep -F 'rapidbodegón-app/scripts/' >/dev/null &&
+            ! printf '%s\n' "$changed_files" |
+              grep -Fx -e '.github/CODEOWNERS' \
+                -e '.github/workflows/protect-admin-scripts.yml' >/dev/null; then
+            echo "No administrative scripts changed."
+            exit 0
+          fi
+
+          if ! jq -e --arg label "$APPROVAL_LABEL" \
+            '[.pull_request.labels[].name] | index($label) != null' \
+            "$EVENT_PATH" >/dev/null; then
+            echo "::error::Changes to protected administrative paths require the '$APPROVAL_LABEL' label."
+            exit 1
+          fi
+
+          echo "The protected-script authorization label is present."

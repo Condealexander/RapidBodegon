@@ -119,8 +119,8 @@ export const ClientView = () => {
       return;
     }
     const ref = paymentRef.trim();
-    if (!/^\d{4,6}$/.test(ref)) {
-      setPaymentError('La referencia debe tener entre 4 y 6 dígitos, solo números.');
+    if (!/^\d{4,12}$/.test(ref)) {
+      setPaymentError('La referencia debe tener entre 4 y 12 dígitos, solo números.');
       return;
     }
     if (myPayments.some(t => t.reference === ref && t.status !== 'REJECTED')) {
@@ -404,7 +404,7 @@ export const ClientView = () => {
                     <Input
                       type="text"
                       inputMode="numeric"
-                      placeholder="Últimos 4-6 dígitos"
+                      placeholder="Referencia (4-12 dígitos)"
                       value={paymentRef}
                       onChange={(e) => setPaymentRef(e.target.value.replace(/\D/g, ''))}
                       maxLength={12}

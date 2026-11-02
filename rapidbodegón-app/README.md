@@ -82,9 +82,11 @@ alineado con las prácticas reales y los requisitos aplicables.
 - Consulta datos bancarios de pago móvil/transferencia, con copia individual o
   copia masiva de todos los campos relevantes.
 - Reporta pagos con monto y referencia; esos reportes quedan `PENDING` hasta
-  su aprobación por parte del administrador. La referencia acepta de 4 a 6
-  dígitos y no se puede reutilizar mientras otro reporte con esa referencia no
-  esté rechazado.
+  su aprobación por parte del administrador. La interfaz acepta referencias
+  numéricas de 4 a 12 dígitos. El administrador verifica manualmente en el banco
+  si el pago se recibió y aprueba o rechaza el reporte; una referencia no se
+  puede reutilizar desde la interfaz mientras otro reporte con ella no esté
+  rechazado.
 - Consulta historial de pagos y consumos, y recibe onboarding y aviso de
   privacidad.
 - Visualiza precios y productos disponibles, ocultando items sin stock.
@@ -135,11 +137,18 @@ junto con días restantes. Cuando un administrador abre la vista de
 administración, la aplicación revisa ciclos vencidos pendientes y consolida
 pagos y consumos completados en el período.
 
-La lógica espera los snapshots iniciales confirmados por el servidor y crea cada
-cierre en una transacción solo si aún no existe. No es una tarea automatizada
-por servidor; un administrador debe abrir la app después de un corte para
-ponerla al día. La revisión se hace hasta 12 ciclos consecutivos, y se detiene
-al encontrar uno ya cerrado.
+La lógica espera que el snapshot de ciclos cerrados esté confirmado por el
+servidor. Para cada período consulta directamente desde el servidor los
+movimientos cuyo `date` está dentro del intervalo y crea cada cierre en una
+transacción solo si aún no existe; no depende del historial administrativo,
+que muestra como máximo 1.000 transacciones. El cierre usa los resultados de esa
+consulta puntual, así que movimientos que se completen después no reescriben un
+ciclo ya cerrado. La prueba con emuladores
+`src/utils/cycle.test.mjs` crea 1.505 movimientos completados, valida los
+límites del intervalo y comprueba que un ciclo ya cerrado no se sobrescriba.
+No es una tarea automatizada por servidor: un administrador debe abrir la app
+después de un corte para ponerla al día. La revisión se hace hasta 12 ciclos
+consecutivos, y se detiene al encontrar uno ya cerrado.
 
 ## PWA y empaquetado nativo
 
@@ -272,6 +281,23 @@ del simulacro y cualquier saldo manual antes de usar `--apply`; el script no
 debe ejecutarse como parte del build ni sin una revisión de los datos que
 corregiría.
 
+### Protección de scripts
+
+Los agentes no deben editar, formatear, mover, renombrar ni eliminar archivos de
+`rapidbodegón-app/scripts/` sin autorización explícita del usuario/mantenedor.
+Los cambios autorizados deben limitarse al alcance aprobado y quedar sujetos a
+revisión del CODEOWNER.
+
+El workflow `.github/workflows/protect-admin-scripts.yml` exige la etiqueta
+`admin-scripts-approved` en los PR que cambien esos scripts (y sus archivos de
+protección); el repositorio debe tener creada esa etiqueta. La etiqueta solo
+señala la excepción; la aprobación efectiva debe provenir de la revisión del
+CODEOWNER. Para que GitHub bloquee el merge, la configuración del repositorio
+debe exigir el check
+`require-admin-script-authorization` y la revisión del CODEOWNER en la
+protección de rama/reglaset de `main`. Sin esa configuración externa, el workflow
+informa el incumplimiento, pero no impide por sí solo un merge.
+
 ## Desarrollo local
 
 Requiere Node.js, Firebase Auth (Email/Password) y Firestore. La configuración
@@ -293,6 +319,7 @@ npm run analyze
 - `npm run analyze`: genera `dist/stats.html` para revisar tamaño y chunks.
 - `npm run cap:sync`: compila y sincroniza cambios con Capacitor.
 - `npm --prefix functions run build`: compila Cloud Functions.
+- `firebase emulators:exec --only firestore,auth --project demo-cycle-volume "node --experimental-strip-types --test src/utils/cycle.test.mjs"`: prueba cierres por período con más de 1.000 movimientos sintéticos y reglas locales.
 
 En VS Code, `.vscode/mcp.json` configura Playwright MCP para interactuar con la
 aplicación en un navegador. La primera ejecución requiere que `npx` pueda
@@ -397,10 +424,21 @@ esa comprobación.
 
 ## Historial de actualizaciones recientes
 
+- **2026-11-02:** los cierres de ciclo consultan las transacciones por intervalo
+  directamente desde el servidor, en lugar de calcular los acumulados desde el
+  historial administrativo limitado a 1.000 documentos; el documento de cierre
+  se crea en una transacción solo si aún no existe. Se añade una prueba con
+  emuladores para 1.505 movimientos, límites de período, permisos administrativos
+  y preservación de cierres existentes.
+- **2026-11-02:** la interfaz de reporte de pagos acepta referencias numéricas
+  de 4 a 12 dígitos, alineada con las reglas de Firestore; la comprobación del
+  pago recibido continúa siendo manual por parte del administrador.
 - **2026-11-02:** se añade el script administrativo `recalc-balances.mjs` para
   comparar los saldos de clientes y acumulados globales con el historial, con
   simulacro predeterminado, exclusión opcional de clientes y respaldo previo a
-  cualquier escritura.
+  cualquier escritura. Se establece la política de no modificación de scripts
+  administrativos por agentes sin autorización explícita, con CODEOWNERS y un
+  check de CI para PRs.
 - **2026-10-13:** se añade el agente de auditoría del repositorio
   (`repo-audit.agent.md`) para producir informes detallados del estado del
   proyecto, riesgos y ajustes necesarios. No cambia la funcionalidad de la app.

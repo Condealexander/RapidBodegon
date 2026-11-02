@@ -9,6 +9,7 @@ Estas pautas documentan cómo realizar cambios en RapidBodegón. Para detalles d
 ## Antes de modificar
 - Localizar el componente, función o regla que realmente controla el comportamiento y revisar sus llamadas y tipos cercanos.
 - Mantener los cambios acotados y respetar las APIs y convenciones ya existentes.
+- **Scripts administrativos protegidos:** no editar, formatear, mover, renombrar ni eliminar archivos bajo `scripts/`, incluido `recalc-balances.mjs`, salvo autorización explícita del usuario/mantenedor para cambiar esos scripts. Una petición general de arreglar, revisar o documentar no es autorización para alterarlos. Si el cambio está autorizado, mantener el alcance exacto solicitado y requerir revisión del CODEOWNER y la aprobación CI configurada para esa ruta.
 - Tratar `README.md` como orientación; confirmar en el código si una función o pendiente sigue vigente.
 - Actualizar obligatoriamente `README.md` en la misma tarea por cada cambio del repositorio, lo haga una persona o un agente. Documentar funciones y flujos en su sección; registrar cambios técnicos, de mantenimiento y de agentes en el historial.
 - Antes de solicitar o dar autorización para un commit, revisar el diff completo frente a `README.md`, identificar si cada cambio ya está documentado y actualizar lo que falte. Comunicar explícitamente el resultado y no crear el commit hasta terminar esta validación.

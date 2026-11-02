@@ -29,6 +29,7 @@ npm --prefix functions run build
 ## Antes de modificar
 - Localiza el componente, función o regla que realmente controla el comportamiento y revisa sus llamadas y tipos cercanos.
 - Mantén los cambios acotados y respeta las APIs y convenciones existentes.
+- **Scripts administrativos protegidos:** no edites, formatees, muevas, renombres ni elimines archivos bajo `rapidbodegón-app/scripts/`, incluido `recalc-balances.mjs`, salvo autorización explícita del usuario/mantenedor para cambiar esos scripts. Una petición general de arreglar, revisar o documentar no es autorización para alterarlos. Si el cambio está autorizado, conserva el alcance exacto solicitado y exige revisión del CODEOWNER y la aprobación CI configurada para esa ruta.
 - Trata `rapidbodegón-app/README.md` como orientación y confirma en el código si una función o pendiente sigue vigente.
 - Es obligatorio actualizar `rapidbodegón-app/README.md` en la misma tarea por cada cambio del repositorio, lo haga una persona o un agente. Documenta los cambios funcionales en su sección y registra los cambios técnicos, de mantenimiento o de agentes en el historial, sin inventar efectos de producto.
 - Antes de solicitar o dar autorización para crear un commit, revisa el diff completo y valida explícitamente si el README ya documenta cada cambio o si hacen falta entradas nuevas (en especial para funciones, flujos y validaciones). Actualiza primero lo que falte y no crees el commit hasta cerrar esta comprobación.
