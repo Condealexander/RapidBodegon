@@ -406,6 +406,11 @@ misma preferencia la usan el selector de Login y el toggle de las vistas
 autenticadas. Sin valor guardado o si el almacenamiento no está disponible, el
 tema predeterminado es oscuro.
 
+Entre el 2 de noviembre de 2026 y el 6 de enero de 2027, Login y ClientView
+aplican una paleta navideña según la fecha local del dispositivo. El modo claro
+u oscuro elegido por la persona se conserva; AdminView no participa en el cambio.
+La apariencia habitual vuelve el 7 de enero, incluso si la app permanece abierta.
+
 ## Política obligatoria de documentación
 
 Cada cambio en el repositorio debe actualizar este README en la misma tarea,
@@ -477,6 +482,9 @@ esa comprobación.
   comprobados, arquitectura activa de la app y límites entre el cliente
   Firestore y el scaffold no conectado de Cloud Functions; se configura
   Playwright MCP en VS Code para interacción de navegador.
+- **2026-11-02:** Login y ClientView reciben una paleta navideña temporal,
+  activa según la fecha local hasta el 6 de enero de 2027, respetando los temas
+  claro y oscuro y sin modificar AdminView.
 
 ## Licencia
 

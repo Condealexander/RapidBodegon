@@ -726,3 +726,123 @@
     transform: none;
   }
 }
+
+:root[data-theme='dark'][data-season='christmas'] .login-shell {
+  --login-text: #f0fdf4;
+  --login-muted: #bbd2c3;
+  --login-panel: rgba(8, 39, 31, 0.9);
+  --login-panel-border: rgba(187, 247, 208, 0.2);
+  --login-field: rgba(3, 25, 20, 0.76);
+  --login-field-border: rgba(187, 247, 208, 0.28);
+  --login-accent: #fca5a5;
+  --login-accent-strong: #ef4444;
+  --login-accent-text: #3b0707;
+  --login-shadow: 0 24px 70px rgba(0, 0, 0, 0.4);
+  background:
+    radial-gradient(ellipse at 18% 12%, rgba(34, 197, 94, 0.2), transparent 38%),
+    radial-gradient(ellipse at 88% 78%, rgba(220, 38, 38, 0.18), transparent 35%),
+    #041b16;
+}
+
+:root[data-theme='dark'][data-season='christmas'] .login-mark {
+  color: #fff7ed;
+  background: linear-gradient(145deg, #f87171, #b91c1c);
+  box-shadow: 0 10px 30px rgba(220, 38, 38, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+:root[data-theme='dark'][data-season='christmas'] .login-shell .login-form input:focus,
+:root[data-theme='dark'][data-season='christmas'] .client-view input:focus,
+:root[data-theme='dark'][data-season='christmas'] .client-view select:focus {
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.22) !important;
+}
+
+:root[data-theme='dark'][data-season='christmas'] .login-snack {
+  font-size: 0;
+}
+
+:root[data-theme='dark'][data-season='christmas'] .login-snack::before {
+  color: #bbf7d0;
+  content: '❄';
+  font-size: clamp(1rem, 2.2vw, 1.45rem);
+}
+
+:root[data-theme='dark'][data-season='christmas'] .client-view {
+  --client-accent: #fca5a5;
+  --client-accent-strong: #ef4444;
+  --client-accent-text: #3b0707;
+  background-color: #041b16;
+  background-image:
+    radial-gradient(ellipse at 10% 0%, rgba(34, 197, 94, 0.16), transparent 34%),
+    radial-gradient(ellipse at 95% 70%, rgba(220, 38, 38, 0.12), transparent 32%);
+}
+
+:root[data-theme='dark'][data-season='christmas'] .client-view .rounded-xl.bg-slate-800 {
+  border-color: rgba(248, 113, 113, 0.2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-theme='light'][data-season='christmas'] .login-shell {
+  --login-text: #17342b;
+  --login-muted: #52645c;
+  --login-panel: rgba(255, 255, 255, 0.92);
+  --login-panel-border: rgba(22, 101, 52, 0.2);
+  --login-field: rgba(248, 250, 248, 0.96);
+  --login-field-border: #b7c9bc;
+  --login-accent: #b91c1c;
+  --login-accent-strong: #991b1b;
+  --login-accent-text: #fff7ed;
+  --login-shadow: 0 24px 70px rgba(22, 55, 39, 0.16);
+  background:
+    radial-gradient(ellipse at 18% 12%, rgba(22, 163, 74, 0.15), transparent 38%),
+    radial-gradient(ellipse at 88% 78%, rgba(220, 38, 38, 0.12), transparent 35%),
+    #f7faf5;
+}
+
+:root[data-theme='light'][data-season='christmas'] .login-mark {
+  color: #fff7ed;
+  background: linear-gradient(145deg, #ef4444, #991b1b);
+  box-shadow: 0 10px 30px rgba(185, 28, 28, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+:root[data-theme='light'][data-season='christmas'] .login-shell .login-form input:focus,
+:root[data-theme='light'][data-season='christmas'] .client-view input:focus,
+:root[data-theme='light'][data-season='christmas'] .client-view select:focus {
+  box-shadow: 0 0 0 3px rgba(185, 28, 28, 0.2) !important;
+}
+
+:root[data-theme='light'][data-season='christmas'] .login-snack {
+  font-size: 0;
+}
+
+:root[data-theme='light'][data-season='christmas'] .login-snack::before {
+  color: #15803d;
+  content: '❄';
+  font-size: clamp(1rem, 2.2vw, 1.45rem);
+}
+
+:root[data-theme='light'][data-season='christmas'] .login-mode-switch {
+  background: rgba(220, 252, 231, 0.72);
+}
+
+:root[data-theme='light'][data-season='christmas'] .login-mode-button.is-active {
+  background: #ffffff;
+}
+
+:root[data-theme='light'][data-season='christmas'] .client-view {
+  --client-accent: #b91c1c;
+  --client-accent-strong: #991b1b;
+  --client-accent-text: #fff7ed;
+  background-color: #f7faf5;
+  background-image:
+    radial-gradient(ellipse at 10% 0%, rgba(22, 163, 74, 0.12), transparent 34%),
+    radial-gradient(ellipse at 95% 70%, rgba(220, 38, 38, 0.09), transparent 32%);
+}
+
+:root[data-theme='light'][data-season='christmas'] .client-view .rounded-xl.bg-slate-800 {
+  border-color: #d7e5d9 !important;
+  box-shadow: 0 10px 28px rgba(22, 55, 39, 0.09);
+}
+
+:root[data-theme='light'][data-season='christmas'] .client-view .client-primary-action {
+  color: var(--client-accent-text) !important;
+}
