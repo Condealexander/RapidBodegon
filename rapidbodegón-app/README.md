@@ -410,6 +410,10 @@ Entre el 2 de noviembre de 2026 y el 6 de enero de 2027, Login y ClientView
 aplican una paleta navideña según la fecha local del dispositivo. El modo claro
 u oscuro elegido por la persona se conserva; AdminView no participa en el cambio.
 La apariencia habitual vuelve el 7 de enero, incluso si la app permanece abierta.
+Durante esa temporada ambas vistas muestran emojis navideños decorativos; el
+cliente añade un cascanueces, un árbol, luces y renos flotantes en los bordes.
+Los adornos no cubren ni interceptan controles y se quedan quietos si el
+dispositivo solicita movimiento reducido.
 
 ## Política obligatoria de documentación
 
@@ -485,6 +489,9 @@ esa comprobación.
 - **2026-11-02:** Login y ClientView reciben una paleta navideña temporal,
   activa según la fecha local hasta el 6 de enero de 2027, respetando los temas
   claro y oscuro y sin modificar AdminView.
+- **2026-11-02:** se añade un fondo decorativo compartido con motivos navideños
+  en Login y ClientView; esta última incorpora cascanueces, árbol, luces y renos
+  flotantes. Los adornos respetan movimiento reducido y no bloquean controles.
 
 ## Licencia
 

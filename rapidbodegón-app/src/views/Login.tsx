@@ -14,6 +14,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { Card, CardContent, Input, Button, Label } from '../components';
+import { SeasonalBackground } from '../components/SeasonalBackground';
 import { useTheme } from '../components/useTheme';
 
 const snackShapes = ['🍿', '🥨', '🍪', '🍫', '🥜', '🍟', '🍩', '🍿', '🥨', '🍪','🍭','🍻'];
@@ -85,6 +86,7 @@ export const Login = () => {
           <span className="login-snack" key={`${snack}-${index}`}>{snack}</span>
         ))}
       </div>
+      <SeasonalBackground variant="login" />
       <div className="login-glow login-glow-one" aria-hidden="true" />
       <div className="login-glow login-glow-two" aria-hidden="true" />
 

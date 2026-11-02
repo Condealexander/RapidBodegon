@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Card, CardHeader, CardContent, Button, Input, Label } from '../components';
 import { Onboarding } from '../components/ui/Onboarding';
+import { SeasonalBackground } from '../components/SeasonalBackground';
 import { ThemeToggle } from '../components/ThemeToggle';
 
 // Cámbialo a true solo cuando quieras que los clientes puedan reportar su
@@ -176,7 +177,8 @@ export const ClientView = () => {
   };
 
   return (
-    <div className="client-view min-h-screen bg-slate-950 text-slate-200 p-4 md:p-8">
+    <div className="client-view relative isolate min-h-screen bg-slate-950 text-slate-200 p-4 md:p-8">
+      <SeasonalBackground variant="client" />
       <Onboarding userId={currentUser.id} />
 
       {/* Header */}
@@ -536,7 +538,6 @@ export const ClientView = () => {
           </Card>
         </div>
       </div>
-
     </div>
   );
 }
