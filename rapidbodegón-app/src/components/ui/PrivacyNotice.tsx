@@ -24,6 +24,7 @@ export const PrivacyNoticeLink = ({ currentScreen }: { currentScreen: AnalyticsV
       } else {
         disableGoogleAnalytics();
       }
+      setOpen(false);
     } catch (error) {
       console.error('No se pudo guardar la preferencia de Google Analytics.', error);
       setConsentState({

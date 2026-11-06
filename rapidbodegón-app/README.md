@@ -59,8 +59,9 @@ La aplicación solicita consentimiento antes de cargar Google Analytics 4. La
 elección (aceptada o rechazada) se guarda en el almacenamiento local del
 navegador; si no puede guardarse o no hay decisión, Analytics permanece
 desactivado. El control «Privacidad» está disponible en las distintas vistas
-para revisar el aviso y cambiar la preferencia. Al retirar el consentimiento se
-deshabilitan los envíos posteriores de Analytics.
+para revisar el aviso y cambiar la preferencia; al guardar una decisión, el
+aviso se cierra. Al retirar el consentimiento se deshabilitan los envíos
+posteriores de Analytics.
 
 Con consentimiento, se registran vistas generales de Login, cliente y
 administración para medir uso de la aplicación. No se envían nombres, UID, PIN,
@@ -507,6 +508,8 @@ esa comprobación.
 - **2026-11-02:** se añade un fondo decorativo compartido con motivos navideños
   en Login y ClientView; esta última incorpora cascanueces, árbol, luces y renos
   flotantes. Los adornos respetan movimiento reducido y no bloquean controles.
+- **2026-11-06:** se cierra el diálogo de privacidad después de guardar
+  correctamente la aceptación o el rechazo de analítica.
 
 ## Licencia
 
