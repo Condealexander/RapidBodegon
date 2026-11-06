@@ -18,6 +18,11 @@ en la versión inicial:
   descargan con el panel, y XLSX solo al solicitar una importación.
 - Registro del service worker después de la carga inicial de la página para
   reducir trabajo durante el arranque, manteniendo la precarga PWA para uso offline.
+- Los recursos del build se sirven desde el precache versionado de Workbox; no
+  se aplica una caché runtime genérica a scripts de terceros ni a chunks que
+  puedan quedar obsoletos tras una actualización. Si falla una importación
+  diferida, la app intenta recargar una vez y luego ofrece un control visible
+  para volver a cargar. Un fallo de Google Analytics no bloquea la aplicación.
 - Actualización diaria de la tasa de cobro desde DolarApi al abrir el panel
   administrativo y al comenzar un nuevo día venezolano mientras la sesión de
   administración sigue activa, con opción de ajuste manual y registro de origen/hora.
@@ -449,6 +454,11 @@ esa comprobación.
   Tag Manager usado por Analytics y las conexiones a DolarApi y endpoints de
   medición. El workflow de protección desactiva el escape octal de Git para
   reconocer correctamente la ruta acentuada de los scripts administrativos.
+- **2026-11-06:** se elimina la caché runtime genérica de recursos estáticos para
+  evitar que intercepte Analytics o sirva chunks antiguos; ante errores de
+  importación diferida se intenta una recarga y se muestra una alternativa
+  manual. Los fallos de carga de Analytics quedan explícitos en consola sin
+  impedir el uso de la app.
 - **2026-11-02:** los cierres de ciclo consultan las transacciones por intervalo
   directamente desde el servidor, en lugar de calcular los acumulados desde el
   historial administrativo limitado a 1.000 documentos; el documento de cierre

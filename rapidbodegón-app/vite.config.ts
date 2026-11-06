@@ -56,21 +56,6 @@ export default defineConfig(() => {
                 },
               },
             },
-            {
-              urlPattern: ({ request }) =>
-                request.destination === 'style' ||
-                request.destination === 'script' ||
-                request.destination === 'image' ||
-                request.destination === 'font',
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'static-assets',
-                expiration: {
-                  maxEntries: 200,
-                  maxAgeSeconds: 60 * 60 * 24 * 30,
-                },
-              },
-            },
           ],
         },
       }),

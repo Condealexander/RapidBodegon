@@ -62,6 +62,12 @@ const startGoogleAnalytics = () => {
     script.id = SCRIPT_ID;
     script.async = true;
     script.src = `https://www.googletagmanager.com/gtag/js?id=${MEASUREMENT_ID}`;
+    script.onerror = () => {
+      analyticsInitialized = false;
+      lastTrackedView = null;
+      script.remove();
+      console.error('No se pudo cargar Google Analytics; la aplicación seguirá funcionando sin medición.');
+    };
 
     window.gtag('js', new Date());
     window.gtag('config', MEASUREMENT_ID, {
