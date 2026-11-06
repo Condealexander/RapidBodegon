@@ -26,6 +26,10 @@ en la versión inicial:
 - Soporte para temas claro/oscuro, importación de inventario y cierre de ciclos.
 - Selección del tema claro/oscuro disponible desde el inicio de sesión; la
   preferencia guardada se conserva al entrar en la vista de cliente o admin.
+- Login y vista de cliente mantienen una paleta sincronizada en ambos temas,
+  con adornos estacionales más visibles y un gorro navideño en el logo del
+  bodegón durante la temporada correspondiente; Login tiene más espacio y el
+  cliente un encabezado adaptable a móviles y mayor separación entre secciones.
 - El panel administrativo comparte la identidad visual del inicio de sesión y
   ClientView, con adaptaciones para modo claro, gráficos y estados.
 - Google Analytics 4 mide vistas generales solo después de que la persona acepta
@@ -411,7 +415,10 @@ aplican una paleta navideña según la fecha local del dispositivo. El modo clar
 u oscuro elegido por la persona se conserva; AdminView no participa en el cambio.
 La apariencia habitual vuelve el 7 de enero, incluso si la app permanece abierta.
 Durante esa temporada ambas vistas muestran emojis navideños decorativos; el
-cliente añade un cascanueces, un árbol, luces y renos flotantes en los bordes.
+cliente añade un cascanueces, un árbol, luces y renos flotantes en los bordes, y
+Login muestra un gorro navideño sobre el logo del bodegón. Los adornos resaltan
+más en ambos temas; Login y el panel del cliente tienen más espacio en pantallas
+pequeñas.
 Los adornos no cubren ni interceptan controles y se quedan quietos si el
 dispositivo solicita movimiento reducido.
 
@@ -433,6 +440,14 @@ esa comprobación.
 
 ## Historial de actualizaciones recientes
 
+- **2026-11-06:** se aumenta la presencia de los adornos y acentos verdes de
+  Login y ClientView en los temas claro y oscuro, se amplía el espacio de Login
+  y del contenido del cliente en móvil, y se añade un gorro navideño estacional
+  al logo del bodegón.
+- **2026-11-06:** se permite en Content Security Policy el script de Google
+  Tag Manager usado por Analytics y las conexiones a DolarApi y endpoints de
+  medición. El workflow de protección desactiva el escape octal de Git para
+  reconocer correctamente la ruta acentuada de los scripts administrativos.
 - **2026-11-02:** los cierres de ciclo consultan las transacciones por intervalo
   directamente desde el servidor, en lugar de calcular los acumulados desde el
   historial administrativo limitado a 1.000 documentos; el documento de cierre

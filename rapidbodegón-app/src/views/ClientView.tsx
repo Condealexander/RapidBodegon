@@ -182,7 +182,7 @@ export const ClientView = () => {
       <Onboarding userId={currentUser.id} />
 
       {/* Header */}
-      <div className="max-w-4xl mx-auto flex justify-between items-center mb-8">
+      <div className="max-w-5xl mx-auto flex flex-col gap-4 mb-9 sm:flex-row sm:justify-between sm:items-center">
         <div>
           <h1 className="text-xl md:text-2xl font-bold text-white">Hola, {currentUser.name}</h1>
           <p className="text-slate-400 text-sm">Resumen de tu cuenta</p>
@@ -199,7 +199,7 @@ export const ClientView = () => {
         <div
           role="status"
           aria-live="polite"
-          className="max-w-4xl mx-auto mb-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+          className="max-w-5xl mx-auto mb-7 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
         >
           <div className="flex items-start gap-3">
             <CalendarClock size={20} className="text-amber-400 shrink-0 mt-0.5" />
@@ -223,10 +223,10 @@ export const ClientView = () => {
         </div>
       )}
 
-      <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-7">
 
         {/* Columna izquierda */}
-        <div className="space-y-6">
+        <div className="space-y-7">
           <Card className={`border ${currentUser.balanceUSD > 0 ? 'border-red-500/30' : 'border-emerald-500/30'}`}>
             <CardContent className="p-8 text-center">
               <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-900 mb-4">
@@ -341,7 +341,7 @@ export const ClientView = () => {
         </div>
 
         {/* Columna derecha */}
-        <div className="space-y-6">
+        <div className="space-y-7">
           {/* Reportar pago */}
           <Card id="report-payment">
             <CardHeader title="💳 Reportar Pago" />

@@ -90,7 +90,7 @@ export const Login = () => {
       <div className="login-glow login-glow-one" aria-hidden="true" />
       <div className="login-glow login-glow-two" aria-hidden="true" />
 
-      <div className="login-content relative z-10 w-full max-w-md">
+      <div className="login-content relative z-10 w-full max-w-lg">
         <div className="login-theme-switch" role="group" aria-label="Tema de la aplicación">
           <button
             type="button"
@@ -112,11 +112,14 @@ export const Login = () => {
           </button>
         </div>
 
-        <header className="mb-7 text-center sm:mb-8">
+        <header className="mb-8 text-center sm:mb-9">
           <div className="login-mark-wrap mx-auto mb-5">
             <div className="login-mark">
               <Store size={32} strokeWidth={1.8} aria-hidden="true" />
             </div>
+            <span className="login-mark-hat" aria-hidden="true">
+              <span className="login-mark-hat-pompom" />
+            </span>
           </div>
           <p className="login-eyebrow">Tu bodega, más cerca</p>
           <h1 className="login-title">RapidBodegón</h1>
@@ -144,7 +147,7 @@ export const Login = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="login-form space-y-5">
+            <form onSubmit={handleSubmit} className="login-form space-y-6">
               {error && (
                 <div role="alert" className="login-error rounded-lg border p-3 text-center text-sm">
                   {error}
