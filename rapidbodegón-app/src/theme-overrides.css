@@ -1085,6 +1085,31 @@
   }
 }
 
+@media (max-width: 767px) {
+  .admin-view .admin-workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-view .admin-workspace-column {
+    display: contents;
+  }
+
+  .admin-view .admin-workspace-column > :not(:first-child) {
+    margin-block-start: 0;
+  }
+
+  .admin-view .admin-mobile-order-10 { order: 10; }
+  .admin-view .admin-mobile-order-20 { order: 20; }
+  .admin-view .admin-mobile-order-30 { order: 30; }
+  .admin-view .admin-mobile-order-40 { order: 40; }
+  .admin-view .admin-mobile-order-50 { order: 50; }
+  .admin-view .admin-mobile-order-60 { order: 60; }
+  .admin-view .admin-mobile-order-61 { order: 61; }
+  .admin-view .admin-mobile-order-80 { order: 80; }
+  .admin-view .admin-mobile-order-90 { order: 90; }
+  .admin-view .admin-mobile-order-100 { order: 100; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .seasonal-background *,
   .seasonal-background *::before,

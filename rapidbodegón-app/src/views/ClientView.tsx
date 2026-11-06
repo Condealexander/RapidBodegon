@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useApp } from '../store/AppContext';
-import { formatCurrency, formatBs } from '../utils/format';
+import { formatCurrency, formatBs, roundToCents } from '../utils/format';
 import { CUTOFF_DAYS, getNextCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
 import {
   Copy, Check, LogOut, Wallet, Info, Receipt, CheckCircle2, Clock, AlertCircle, ShoppingBag, CalendarClock
@@ -32,6 +32,11 @@ const StatusBadge = ({ status }: { status: string }) => {
 const selectClass =
   'w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500';
 
+const formatPaymentCents = (cents: string, currency: 'USD' | 'BS') => {
+  const formatted = (Number(cents || '0') / 100).toFixed(2);
+  return currency === 'BS' ? formatted.replace('.', ',') : formatted;
+};
+
 export const ClientView = () => {
   const {
     currentUser, transactions, config, products,
@@ -39,7 +44,7 @@ export const ClientView = () => {
   } = useApp();
 
   const [currency, setCurrency] = useState<'USD' | 'BS'>('USD');
-  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentAmountCents, setPaymentAmountCents] = useState('0');
   const [paymentRef, setPaymentRef] = useState('');
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [paymentError, setPaymentError] = useState('');
@@ -78,10 +83,10 @@ export const ClientView = () => {
   const rate = config.exchangeRate;
   const canUseBs = !!rate && rate > 0;
 
-  const parsedAmount = parseFloat(paymentAmount.replace(',', '.'));
+  const normalizedPaymentAmount = roundToCents(Number(paymentAmountCents) / 100);
   const amountUSD =
-    !isNaN(parsedAmount) && parsedAmount > 0
-      ? Math.round((currency === 'BS' && canUseBs ? parsedAmount / rate : parsedAmount) * 100) / 100
+    Number.isFinite(normalizedPaymentAmount) && normalizedPaymentAmount > 0
+      ? roundToCents(currency === 'BS' && canUseBs ? normalizedPaymentAmount / rate : normalizedPaymentAmount)
       : 0;
 
   const nextCutoff = getNextCutoff();
@@ -115,7 +120,12 @@ export const ClientView = () => {
     if (submittingPayment) return;
     setPaymentError('');
 
-    if (amountUSD < 0.1) {
+    const roundedInputAmount = roundToCents(Number(paymentAmountCents) / 100);
+
+    const reportedAmountUSD = currency === 'BS' && canUseBs
+      ? roundToCents(roundedInputAmount / rate)
+      : roundedInputAmount;
+    if (!Number.isFinite(reportedAmountUSD) || reportedAmountUSD < 0.1) {
       setPaymentError('Ingresa un monto válido.');
       return;
     }
@@ -130,7 +140,7 @@ export const ClientView = () => {
     }
 
     setSubmittingPayment(true);
-    const result = await reportPayment(currentUser.id, amountUSD, ref);
+    const result = await reportPayment(currentUser.id, reportedAmountUSD, ref);
     setSubmittingPayment(false);
 
     if (!result.success) {
@@ -138,7 +148,7 @@ export const ClientView = () => {
       return;
     }
 
-    setPaymentAmount('');
+    setPaymentAmountCents('0');
     setPaymentRef('');
     setPaymentSuccess(true);
     setTimeout(() => setPaymentSuccess(false), 3000);
@@ -364,7 +374,7 @@ export const ClientView = () => {
                   )}
 
                   <div>
-                    <Label>💵 Monto pagado</Label>
+                    <Label htmlFor="client-payment-amount">💵 Monto pagado</Label>
                     <div className="flex gap-2 mb-2">
                       <Button
                         type="button"
@@ -385,13 +395,20 @@ export const ClientView = () => {
                       </Button>
                     </div>
                     <Input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
+                      id="client-payment-amount"
+                      type="text"
                       inputMode="decimal"
                       placeholder={currency === 'USD' ? 'Ej. 5.50' : 'Ej. 250,00'}
-                      value={paymentAmount}
-                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      value={formatPaymentCents(paymentAmountCents, currency)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onChange={(e) => {
+                        const input = e.currentTarget;
+                        const digits = input.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+                        setPaymentAmountCents(digits || '0');
+                        requestAnimationFrame(() => {
+                          input.setSelectionRange(input.value.length, input.value.length);
+                        });
+                      }}
                       required
                     />
                     {currency === 'BS' && amountUSD > 0 && (

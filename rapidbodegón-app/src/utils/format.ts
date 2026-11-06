@@ -1,3 +1,9 @@
+export const toCents = (amount: number) => Math.round((amount + Number.EPSILON) * 100);
+
+export const fromCents = (cents: number) => cents / 100;
+
+export const roundToCents = (amount: number) => fromCents(toCents(amount));
+
 export const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',

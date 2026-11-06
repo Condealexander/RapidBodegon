@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { getVenezuelaDateKey, useApp } from '../store/AppContext';
-import { formatCurrency, formatBs } from '../utils/format';
+import { formatCurrency, formatBs, fromCents, toCents } from '../utils/format';
 import { getNextCutoff, getPreviousCutoff, daysUntilNextCutoff, formatCutoffDate } from '../utils/cycle';
 import {
   Users, DollarSign, Wallet, Calendar, Plus,
-  CheckCircle2, XCircle, Search, Clock, LogOut, BarChart3,
+  CheckCircle2, XCircle, Search, Clock, LogOut, BarChart3, Trash2,
   Package, Upload, Save, Receipt, AlertCircle, History
 } from 'lucide-react';
 import { Card, CardHeader, CardContent, Button, Input, Label } from '../components';
@@ -12,7 +12,7 @@ import { ThemeToggle } from '../components/ThemeToggle';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-import type { ProductImportRow } from '../store/AppContext';
+import type { ConsumptionLine, ProductImportRow } from '../store/AppContext';
 
 type ActionResult = { success: boolean; error?: string };
 
@@ -27,16 +27,18 @@ export const AdminView = () => {
     expensesReady, currentCycleExpensesReady, currentCycleTransactionsReady,
     financialTotals, financialTotalsError, expensesError, currentCycleExpensesError,
     financialTotalsReady, currentCycleTransactionsError, config, cycles, logout,
-    addConsumption, updateExchangeRate, refreshExchangeRateFromSources, approvePayment, rejectPayment,
+    addConsumptionBatch, updateExchangeRate, refreshExchangeRateFromSources, approvePayment, rejectPayment,
     approveConsumption, rejectConsumption, addExpense,
     updateProductStocks, importProducts
   } = useApp();
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [clientBalanceFilter, setClientBalanceFilter] = useState<'ALL' | 'DUE' | 'CURRENT'>('ALL');
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [historyUserId, setHistoryUserId] = useState<string>('');
   const [selectedProductId, setSelectedProductId] = useState<string>('');
-  const [quantity, setQuantity] = useState<number>(1);
+  const [quantity, setQuantity] = useState('1');
+  const [stagedConsumptions, setStagedConsumptions] = useState<ConsumptionLine[]>([]);
   const [newRate, setNewRate] = useState<string>(String(config.exchangeRate ?? ''));
   const [rateMsg, setRateMsg] = useState<string>('');
   const [consumptionError, setConsumptionError] = useState<string>('');
@@ -50,6 +52,7 @@ export const AdminView = () => {
 
   const [actionError, setActionError] = useState<string>('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const consumptionSubmissionRef = useRef(false);
 
   const [stockEdits, setStockEdits] = useState<Record<string, string>>({});
   const [importing, setImporting] = useState(false);
@@ -115,10 +118,16 @@ export const AdminView = () => {
   const usersById = useMemo(() => new Map(users.map(user => [user.id, user])), [users]);
   const productsById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
   const clients = useMemo(() => users.filter(u => u.role === 'CLIENT'), [users]);
-  const filteredClients = useMemo(
-    () => clients.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())),
-    [clients, searchTerm]
-  );
+  const filteredClients = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLocaleLowerCase();
+    return clients.filter(client => {
+      const matchesName = client.name.toLocaleLowerCase().includes(normalizedSearch);
+      const matchesBalance = clientBalanceFilter === 'ALL'
+        || (clientBalanceFilter === 'DUE' && client.balanceUSD > 0)
+        || (clientBalanceFilter === 'CURRENT' && client.balanceUSD <= 0);
+      return matchesName && matchesBalance;
+    });
+  }, [clients, clientBalanceFilter, searchTerm]);
 
   const totalCredit = useMemo(
     () => clients.reduce((acc, client) => acc + client.balanceUSD, 0),
@@ -209,6 +218,19 @@ export const AdminView = () => {
   const selectedHistoryClient = usersById.get(historyUserId);
   const clientCycleConsumptionTotal = clientCycleConsumptions
     .reduce((total, transaction) => total + transaction.amountUSD, 0);
+  const stagedConsumptionTotal = stagedConsumptions.reduce((total, item) => {
+    const product = productsById.get(item.productId);
+    return total + (product ? fromCents(toCents(product.priceUSD) * item.quantity) : 0);
+  }, 0);
+
+  const selectConsumptionClient = (userId: string) => {
+    if (userId !== selectedUserId) {
+      setStagedConsumptions([]);
+      setConsumptionError('');
+    }
+    setSelectedUserId(userId);
+    setHistoryUserId(userId);
+  };
 
   const runAction = async (id: string, fn: () => Promise<ActionResult>) => {
     if (busyId) return;
@@ -224,18 +246,67 @@ export const AdminView = () => {
     }
   };
 
-  const handleAddConsumption = async (e: React.FormEvent) => {
+  const handleStageConsumption = (e: React.FormEvent) => {
     e.preventDefault();
     setConsumptionError('');
-    if (selectedUserId && selectedProductId && quantity > 0) {
-      const result = await addConsumption(selectedUserId, selectedProductId, quantity);
-      if (!result.success) {
-        setConsumptionError(result.error || 'No se pudo registrar el consumo.');
-        return;
-      }
-      setSelectedUserId('');
-      setSelectedProductId('');
-      setQuantity(1);
+    const parsedQuantity = quantity.trim() ? Number(quantity) : NaN;
+    if (!selectedUserId) {
+      setConsumptionError('Selecciona un cliente antes de agregar productos.');
+      return;
+    }
+    if (!selectedProductId || !Number.isSafeInteger(parsedQuantity) || parsedQuantity <= 0) {
+      setConsumptionError('Selecciona un producto y una cantidad entera mayor a cero.');
+      return;
+    }
+
+    const product = productsById.get(selectedProductId);
+    if (!product) {
+      setConsumptionError('El producto seleccionado ya no está disponible. Actualiza la página.');
+      return;
+    }
+
+    const alreadyStaged = stagedConsumptions
+      .filter(item => item.productId === selectedProductId)
+      .reduce((total, item) => total + item.quantity, 0);
+    if (alreadyStaged + parsedQuantity > product.stock) {
+      setConsumptionError(`Solo hay ${product.stock - alreadyStaged} unidad(es) adicionales de ${product.name} disponibles.`);
+      return;
+    }
+
+    setStagedConsumptions(previous => {
+      const existing = previous.find(item => item.productId === selectedProductId);
+      if (!existing) return [...previous, { productId: selectedProductId, quantity: parsedQuantity }];
+      return previous.map(item => item.productId === selectedProductId
+        ? { ...item, quantity: item.quantity + parsedQuantity }
+        : item);
+    });
+    setSelectedProductId('');
+    setQuantity('1');
+  };
+
+  const handleRegisterConsumption = async () => {
+    if (consumptionSubmissionRef.current || busyId) return;
+    if (!selectedUserId || stagedConsumptions.length === 0) {
+      setConsumptionError('Selecciona un cliente y agrega al menos un producto.');
+      return;
+    }
+
+    consumptionSubmissionRef.current = true;
+    setConsumptionError('');
+    try {
+      await runAction('consumption-batch', async () => {
+        const result = await addConsumptionBatch(selectedUserId, stagedConsumptions);
+        if (result.success) {
+          setStagedConsumptions([]);
+          setSelectedProductId('');
+          setQuantity('1');
+        } else {
+          setConsumptionError(result.error || 'No se pudo registrar el consumo.');
+        }
+        return result;
+      });
+    } finally {
+      consumptionSubmissionRef.current = false;
     }
   };
 
@@ -559,12 +630,12 @@ export const AdminView = () => {
         </Card>
       </div>
 
-      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="admin-workspace-grid max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="admin-workspace-column admin-workspace-primary-column lg:col-span-2 space-y-6">
 
           {pendingConsumptions.length > 0 && (
-            <Card className="border-blue-500/30">
+            <Card className="admin-mobile-order-10 border-blue-500/30">
               <CardHeader
                 title="Consumos por Confirmar"
                 subtitle={`${pendingConsumptions.length} reporte(s) de clientes en espera`}
@@ -575,7 +646,7 @@ export const AdminView = () => {
                     const client = usersById.get(tx.userId);
                     const product = tx.productId ? productsById.get(tx.productId) : undefined;
                     const qty = Number(tx.quantity) || 0;
-                    const realAmount = product ? Math.round(product.priceUSD * qty * 100) / 100 : null;
+                    const realAmount = product ? fromCents(toCents(product.priceUSD) * qty) : null;
                     return (
                       <div key={tx.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-blue-500/5">
                         <div>
@@ -629,7 +700,7 @@ export const AdminView = () => {
           )}
 
           {pendingPayments.length > 0 && (
-            <Card className="border-yellow-500/30">
+            <Card className="admin-mobile-order-20 border-yellow-500/30">
               <CardHeader
                 title="Pagos Pendientes por Conciliar"
                 subtitle={`${pendingPayments.length} reporte(s) en espera`}
@@ -683,17 +754,34 @@ export const AdminView = () => {
           )}
 
           {/* Client Table */}
-          <Card>
+          <Card className="admin-mobile-order-40">
             <CardHeader title="Directorio de Clientes" />
             <CardContent>
-              <div className="relative mb-4">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                <Input
-                  placeholder="Buscar cliente por nombre..."
-                  className="pl-10 bg-slate-900 border-slate-700"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+              <div className="mb-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                  <Input
+                    placeholder="Buscar cliente por nombre..."
+                    className="pl-10 bg-slate-900 border-slate-700"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <select
+                  aria-label="Filtrar clientes por estado de saldo"
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  value={clientBalanceFilter}
+                  onChange={event => {
+                    const filter = event.target.value;
+                    if (filter === 'ALL' || filter === 'DUE' || filter === 'CURRENT') {
+                      setClientBalanceFilter(filter);
+                    }
+                  }}
+                >
+                  <option value="ALL">Todos los clientes</option>
+                  <option value="DUE">Saldo pendiente</option>
+                  <option value="CURRENT">Al día</option>
+                </select>
               </div>
 
               <div className="overflow-x-auto">
@@ -730,10 +818,8 @@ export const AdminView = () => {
                           <Button
                             variant="secondary"
                             className="px-2 py-1 text-xs h-auto"
-                            onClick={() => {
-                              setSelectedUserId(client.id);
-                              setHistoryUserId(client.id);
-                            }}
+                            disabled={busyId !== null}
+                            onClick={() => selectConsumptionClient(client.id)}
                           >
                             <Plus size={14} className="mr-1" /> Ver / cargar
                           </Button>
@@ -744,14 +830,16 @@ export const AdminView = () => {
                 </table>
                 {filteredClients.length === 0 && (
                   <div className="p-8 text-center text-slate-500">
-                    No se encontraron clientes con ese nombre.
+                    {searchTerm.trim()
+                      ? 'No se encontraron clientes con ese nombre y estado de saldo.'
+                      : 'No hay clientes en este estado de saldo.'}
                   </div>
                 )}
               </div>
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="admin-mobile-order-50">
             <CardHeader
               title="Consumos del Ciclo Actual"
               subtitle={selectedHistoryClient
@@ -799,7 +887,7 @@ export const AdminView = () => {
           </Card>
 
           {/* Inventory */}
-          <Card className="border-purple-500/20">
+          <Card className="admin-mobile-order-90 border-purple-500/20">
             <CardHeader
               title="Inventario"
               subtitle="Ajusta varios stocks y guárdalos juntos o impórtalos desde Excel/CSV"
@@ -890,7 +978,7 @@ export const AdminView = () => {
           </Card>
 
           {/* Historial de ciclos de cobro */}
-          <Card>
+          <Card className="admin-mobile-order-100">
             <CardHeader
               title="Historial de Ciclos de Cobro"
               subtitle="Cortes de cuenta (días 3, 10, 17 y 25). Se registran solos al abrir este panel después de cada fecha."
@@ -926,14 +1014,14 @@ export const AdminView = () => {
         </div>
 
         {/* Right Column: Actions & Config */}
-        <div className="space-y-6">
+        <div className="admin-workspace-column admin-workspace-secondary-column space-y-6">
 
-          <Card className="border-blue-500/20">
+          <Card className="admin-mobile-order-30 border-blue-500/20">
             <CardHeader title="Cargar Consumo" subtitle="Registrar nueva compra a crédito" />
             <CardContent>
-              <form onSubmit={handleAddConsumption} className="space-y-4">
+              <form onSubmit={handleStageConsumption} className="space-y-4">
                 {consumptionError && (
-                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
+                  <div role="alert" className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
                     {consumptionError}
                   </div>
                 )}
@@ -942,10 +1030,8 @@ export const AdminView = () => {
                   <select
                     className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     value={selectedUserId}
-                    onChange={(e) => {
-                      setSelectedUserId(e.target.value);
-                      setHistoryUserId(e.target.value);
-                    }}
+                    disabled={busyId !== null}
+                    onChange={(e) => selectConsumptionClient(e.target.value)}
                     required
                   >
                     <option value="">Seleccione un cliente...</option>
@@ -960,13 +1046,14 @@ export const AdminView = () => {
                   <select
                     className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     value={selectedProductId}
+                    disabled={busyId !== null}
                     onChange={(e) => setSelectedProductId(e.target.value)}
                     required
                   >
                     <option value="">Seleccione producto...</option>
-                    {products.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} - {formatCurrency(p.priceUSD)} (stock: {p.stock})
+                    {products.map(product => (
+                      <option key={product.id} value={product.id} disabled={product.stock <= 0}>
+                        {product.name} - {formatCurrency(product.priceUSD)} (stock: {product.stock})
                       </option>
                     ))}
                   </select>
@@ -977,20 +1064,92 @@ export const AdminView = () => {
                   <Input
                     type="number"
                     min="1"
+                    step="1"
                     value={quantity}
-                    onChange={(e) => setQuantity(parseInt(e.target.value) || 1)}
+                    disabled={busyId !== null}
+                    onChange={(e) => setQuantity(e.target.value)}
                     required
                   />
                 </div>
 
-                <Button type="submit" className="w-full">
-                  Registrar Consumo
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  className="w-full"
+                  disabled={!selectedUserId || busyId !== null}
+                >
+                  <Plus size={16} className="mr-2" /> Agregar producto
                 </Button>
               </form>
+
+              <div className="mt-5 rounded-lg border border-slate-700/70 bg-slate-900/50">
+                <div className="flex items-center justify-between gap-3 border-b border-slate-700/70 px-4 py-3">
+                  <div>
+                    <p className="font-medium text-slate-200">Productos por registrar</p>
+                    <p className="text-xs text-slate-500">
+                      {stagedConsumptions.length} producto(s) · Total {formatCurrency(stagedConsumptionTotal)}
+                    </p>
+                  </div>
+                  {stagedConsumptions.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs text-slate-400 underline underline-offset-2 hover:text-white"
+                      disabled={busyId !== null}
+                      onClick={() => setStagedConsumptions([])}
+                    >
+                      Vaciar
+                    </button>
+                  )}
+                </div>
+                {stagedConsumptions.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-slate-500">Agrega productos y cantidades antes de guardar.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-700/60">
+                    {stagedConsumptions.map(item => {
+                      const product = productsById.get(item.productId);
+                      const lineTotal = product
+                        ? fromCents(toCents(product.priceUSD) * item.quantity)
+                        : 0;
+                      return (
+                        <li key={item.productId} className="flex items-center justify-between gap-3 px-4 py-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-slate-200">
+                              {product?.name || 'Producto no disponible'} × {item.quantity}
+                            </p>
+                            <p className="text-xs text-slate-500">{formatCurrency(lineTotal)}</p>
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-md p-2 text-red-400 hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400"
+                            aria-label={`Quitar ${product?.name || 'producto'}`}
+                            disabled={busyId !== null}
+                            onClick={() => setStagedConsumptions(previous =>
+                              previous.filter(line => line.productId !== item.productId))}
+                          >
+                            <Trash2 size={16} aria-hidden="true" />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              <Button
+                type="button"
+                className="mt-4 w-full"
+                disabled={!selectedUserId || stagedConsumptions.length === 0 || busyId !== null}
+                onClick={() => void handleRegisterConsumption()}
+              >
+                {busyId === 'consumption-batch' ? 'Registrando...' : `Registrar consumo (${formatCurrency(stagedConsumptionTotal)})`}
+              </Button>
+              <p className="mt-2 text-center text-xs text-slate-500">
+                Se validarán nuevamente los precios y existencias antes de guardar.
+              </p>
             </CardContent>
           </Card>
 
-          <Card className="border-amber-500/20">
+          <Card className="admin-mobile-order-60 border-amber-500/20">
             <CardHeader title="Registrar Egreso" subtitle="Reposición u otros gastos del negocio (USD)" />
             <CardContent>
               {!financialTotalsReady || globalAvailable === null ? (
@@ -1042,7 +1201,7 @@ export const AdminView = () => {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="admin-mobile-order-61">
             <CardHeader title="Egresos Recientes" subtitle="Últimos 50 movimientos registrados" />
             <CardContent className="p-0">
               {expensesError ? (
@@ -1069,7 +1228,7 @@ export const AdminView = () => {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="admin-mobile-order-80">
             <CardHeader title="Configuración" />
             <CardContent>
               <form onSubmit={handleUpdateRate} className="space-y-4">

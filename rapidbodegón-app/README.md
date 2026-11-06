@@ -22,7 +22,9 @@ en la versión inicial:
   se aplica una caché runtime genérica a scripts de terceros ni a chunks que
   puedan quedar obsoletos tras una actualización. Si falla una importación
   diferida, la app intenta recargar una vez y luego ofrece un control visible
-  para volver a cargar. Un fallo de Google Analytics no bloquea la aplicación.
+  para volver a cargar; si el navegador no permite guardar el intento de
+  recuperación, ofrece el control manual sin repetir recargas. Un fallo de
+  Google Analytics no bloquea la aplicación.
 - Actualización diaria de la tasa de cobro desde DolarApi al abrir el panel
   administrativo y al comenzar un nuevo día venezolano mientras la sesión de
   administración sigue activa, con opción de ajuste manual y registro de origen/hora.
@@ -96,7 +98,9 @@ alineado con las prácticas reales y los requisitos aplicables.
   numéricas de 4 a 12 dígitos. El administrador verifica manualmente en el banco
   si el pago se recibió y aprueba o rechaza el reporte; una referencia no se
   puede reutilizar desde la interfaz mientras otro reporte con ella no esté
-  rechazado.
+  rechazado. El campo de monto inicia en `0.00` (o `0,00` en Bs) y aplica una
+  máscara de centavos: al escribir o pegar dígitos los interpreta con dos
+  decimales automáticos (por ejemplo, `1234` se muestra como `12.34` / `12,34`).
 - Consulta historial de pagos y consumos, y recibe onboarding y aviso de
   privacidad.
 - Visualiza precios y productos disponibles, ocultando items sin stock.
@@ -122,8 +126,17 @@ desactivado con `ENABLE_CONSUMPTION_REPORT = false` en `src/views/ClientView.tsx
   50 movimientos y ve el recaudado neto del ciclo y el disponible global
   acumulado, con su equivalente en Bs. Los egresos no modifican el inventario.
 - Busca clientes por nombre y revisa gráficos de ventas diarias.
-- Registra consumos a crédito. La operación actualiza transacción, saldo del
-  cliente y stock mediante una transacción de Firestore.
+- Filtra el directorio por saldo pendiente o al día según el saldo actual del
+  cliente; los pagos aún no aprobados no se descuentan del saldo.
+- Prepara varios productos y cantidades para un cliente antes de guardar el
+  consumo, hasta 200 productos distintos por operación. El registro conjunto
+  relee precios, stock y cliente en Firestore y actualiza transacciones, saldo
+  y stock dentro de una sola transacción; si no hay stock o falla una
+  validación, no se guarda parcialmente. El total multiplica la cantidad por el
+  precio unitario redondeado a centavos, igual que el precio mostrado.
+- En móvil, las secciones administrativas se reorganizan para mostrar primero
+  consumos, luego el directorio y su historial, egresos y ciclos; las gráficas
+  y el orden de escritorio se conservan.
 - Aprueba o rechaza pagos y solicitudes de consumo pendientes.
 - Ajusta varios stocks manualmente y guarda los cambios juntos con un solo
   botón, o importa `.xlsx`, `.xls` y `.csv` con columnas `PRODUCTO` y `STOCK`,
@@ -446,6 +459,14 @@ esa comprobación.
 
 ## Historial de actualizaciones recientes
 
+- **2026-11-06:** el panel administrativo filtra clientes por saldo actual y
+  permite preparar varios productos antes de registrar un consumo atómico;
+  también reorganiza las secciones en móvil. Los importes de consumo y el saldo
+  usan el precio unitario redondeado a centavos. El campo de pago inicia en
+  cero con dos decimales y aplica una máscara de centavos al escribir o pegar.
+- **2026-11-06:** ante errores de carga de chunks, la app ofrece una recarga
+  manual si no puede guardar el marcador de recuperación, evitando intentos
+  automáticos repetidos.
 - **2026-11-06:** se aumenta la presencia de los adornos y acentos verdes de
   Login y ClientView en los temas claro y oscuro, se amplía el espacio de Login
   y del contenido del cliente en móvil, y se añade un gorro navideño estacional

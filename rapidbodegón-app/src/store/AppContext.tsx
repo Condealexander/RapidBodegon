@@ -15,6 +15,7 @@ import {
   UserCredential
 } from 'firebase/auth';
 import { getPreviousCutoff, listPastUnclosedCycles } from '../utils/cycle';
+import { fromCents, toCents } from '../utils/format';
 import { closeCycleIfMissing } from './cycleClosures';
 
 interface RegisterResult {
@@ -25,6 +26,11 @@ interface RegisterResult {
 interface ConsumptionResult {
   success: boolean;
   error?: string;
+}
+
+export interface ConsumptionLine {
+  productId: string;
+  quantity: number;
 }
 
 export interface ProductImportRow {
@@ -93,6 +99,7 @@ interface AppContextType {
   register: (name: string, pin: string) => Promise<RegisterResult>;
   logout: () => Promise<void>;
   addConsumption: (userId: string, productId: string, quantity: number) => Promise<ConsumptionResult>;
+  addConsumptionBatch: (userId: string, items: ConsumptionLine[]) => Promise<ConsumptionResult>;
   requestConsumption: (productId: string, quantity: number) => Promise<RegisterResult>;
   approveConsumption: (transactionId: string) => Promise<RegisterResult>;
   rejectConsumption: (transactionId: string) => Promise<RegisterResult>;
@@ -474,42 +481,108 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     cycleCloseAttemptedRef.current = false;
   };
 
-  const addConsumption = async (userId: string, productId: string, quantity: number): Promise<ConsumptionResult> => {
-    const productRef = doc(db, 'products', productId);
+  const addConsumptionBatch = async (
+    userId: string,
+    items: ConsumptionLine[],
+  ): Promise<ConsumptionResult> => {
+    if (!userId || items.length === 0) {
+      return { success: false, error: 'Selecciona un cliente y al menos un producto.' };
+    }
+
+    const quantitiesByProduct = new Map<string, number>();
+    for (const item of items) {
+      if (!item.productId || !Number.isSafeInteger(item.quantity) || item.quantity <= 0) {
+        return { success: false, error: 'Cada producto debe tener una cantidad entera mayor a cero.' };
+      }
+
+      quantitiesByProduct.set(
+        item.productId,
+        (quantitiesByProduct.get(item.productId) ?? 0) + item.quantity,
+      );
+      if (!Number.isSafeInteger(quantitiesByProduct.get(item.productId))) {
+        return { success: false, error: 'La cantidad total de uno de los productos no es válida.' };
+      }
+    }
+
+    if (quantitiesByProduct.size > 200) {
+      return { success: false, error: 'No se pueden registrar más de 200 productos en una sola operación.' };
+    }
+
+    const normalizedItems = [...quantitiesByProduct].map(([productId, quantity]) => ({
+      productId,
+      quantity,
+      productRef: doc(db, 'products', productId),
+      transactionRef: doc(collection(db, 'transactions')),
+    }));
     const userRef = doc(db, 'users', userId);
-    const txRef = doc(collection(db, 'transactions'));
 
     try {
       await runTransaction(db, async (transaction) => {
-        const productSnap = await transaction.get(productRef);
-        if (!productSnap.exists()) throw new Error('El producto ya no existe.');
-        const product = productSnap.data() as Product;
-
-        if (product.stock < quantity) {
-          throw new Error(`Stock insuficiente de "${product.name}" (disponible: ${product.stock}).`);
+        const [userSnap, ...productSnaps] = await Promise.all([
+          transaction.get(userRef),
+          ...normalizedItems.map(item => transaction.get(item.productRef)),
+        ]);
+        if (!userSnap.exists() || userSnap.get('role') !== 'CLIENT') {
+          throw new Error('No se encontró el cliente seleccionado.');
         }
 
-        const amountUSD = product.priceUSD * quantity;
-        const newTx: Transaction = {
-          id: txRef.id,
-          userId,
-          type: 'CONSUMPTION',
-          amountUSD,
-          date: new Date().toISOString(),
-          status: 'COMPLETED',
-          productId,
-          quantity
-        };
+        const productsToSave = normalizedItems.map((item, index) => {
+          const productSnap = productSnaps[index];
+          if (!productSnap.exists()) throw new Error('Uno de los productos ya no existe.');
 
-        transaction.set(txRef, newTx);
-        transaction.update(userRef, { balanceUSD: increment(amountUSD) });
-        transaction.update(productRef, { stock: increment(-quantity) });
+          const product = productSnap.data() as Product;
+          if (!Number.isFinite(product.stock) || product.stock < item.quantity) {
+            throw new Error(`Stock insuficiente de "${product.name}" (disponible: ${product.stock}).`);
+          }
+          if (!Number.isFinite(product.priceUSD) || product.priceUSD < 0) {
+            throw new Error(`El precio de "${product.name}" no es válido.`);
+          }
+
+          const amountCents = toCents(product.priceUSD) * item.quantity;
+          if (!Number.isSafeInteger(amountCents)) {
+            throw new Error(`El importe de "${product.name}" no es válido.`);
+          }
+          return { ...item, product, amountCents, amountUSD: fromCents(amountCents) };
+        });
+
+        const totalAmountCents = productsToSave.reduce(
+          (total, item) => total + item.amountCents,
+          0,
+        );
+        if (!Number.isSafeInteger(totalAmountCents)) {
+          throw new Error('El total de los productos no es válido.');
+        }
+        const totalAmountUSD = totalAmountCents / 100;
+
+        const transactionDate = new Date().toISOString();
+        for (const item of productsToSave) {
+          const newTx: Transaction = {
+            id: item.transactionRef.id,
+            userId,
+            type: 'CONSUMPTION',
+            amountUSD: item.amountUSD,
+            date: transactionDate,
+            status: 'COMPLETED',
+            productId: item.productId,
+            quantity: item.quantity,
+          };
+
+          transaction.set(item.transactionRef, newTx);
+          transaction.update(item.productRef, { stock: increment(-item.quantity) });
+        }
+        transaction.update(userRef, { balanceUSD: increment(totalAmountUSD) });
       });
       return { success: true };
-    } catch (e: any) {
-      return { success: false, error: e?.message || 'No se pudo registrar el consumo.' };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'No se pudo registrar el consumo.',
+      };
     }
   };
+
+  const addConsumption = async (userId: string, productId: string, quantity: number) =>
+    addConsumptionBatch(userId, [{ productId, quantity }]);
 
   const requestConsumption = async (productId: string, quantity: number): Promise<RegisterResult> => {
     if (!currentUser) return { success: false, error: 'Debes iniciar sesión.' };
@@ -520,12 +593,16 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     if (!product) return { success: false, error: 'Ese producto ya no existe.' };
 
     try {
+      const amountCents = toCents(product.priceUSD) * quantity;
+      if (!Number.isSafeInteger(amountCents) || amountCents < 0) {
+        return { success: false, error: 'El precio del producto no es válido.' };
+      }
       const txRef = doc(collection(db, 'transactions'));
       const newTx: Transaction = {
         id: txRef.id,
         userId: currentUser.id,
         type: 'CONSUMPTION',
-        amountUSD: Math.round(product.priceUSD * quantity * 100) / 100,
+        amountUSD: fromCents(amountCents),
         date: new Date().toISOString(),
         status: 'PENDING',
         productId,
@@ -559,7 +636,11 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         if (product.stock < qty) {
           throw new Error(`Stock insuficiente de "${product.name}" (disponible: ${product.stock}).`);
         }
-        const amountUSD = Math.round(product.priceUSD * qty * 100) / 100;
+        const amountCents = toCents(product.priceUSD) * qty;
+        if (!Number.isSafeInteger(amountCents) || amountCents < 0) {
+          throw new Error('El precio del producto no es válido.');
+        }
+        const amountUSD = fromCents(amountCents);
         transaction.update(txRef, { status: 'COMPLETED', amountUSD });
         transaction.update(doc(db, 'users', tx.userId), { balanceUSD: increment(amountUSD) });
         transaction.update(productRef, { stock: increment(-qty) });
@@ -880,6 +961,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     register,
     logout,
     addConsumption,
+    addConsumptionBatch,
     requestConsumption,
     approveConsumption,
     rejectConsumption,

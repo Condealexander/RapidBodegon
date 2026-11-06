@@ -26,6 +26,7 @@ window.addEventListener('vite:preloadError', (event) => {
       sessionStorage.setItem(PRELOAD_ERROR_KEY, String(Date.now()));
     }
   } catch (error) {
+    shouldReload = false;
     console.error('No se pudo comprobar el estado de recuperación de la aplicación.', error);
   }
 
